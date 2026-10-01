@@ -41,7 +41,7 @@ The opponent heads are trained with supervised losses against the exact labels t
 2. **Supervised pre-training.** BC loss on actions plus opponent-head losses. Claims are only ~4% of decisions, so weight the claim decisions (or give them their own head), or the model learns to always pass.
 3. **PPO self-play league** (`dasanyuan.Env`):
    - The learner plays some seats; the others are drawn from a pool of past checkpoints and the heuristic bots. Pure self-play against identical copies tends to collapse into habits that only work against itself.
-   - Reward: this seat's points at the end of the hand, scaled down (e.g. divided by 16, or a signed log) because a 64-point deal-in would otherwise swamp everything. Draws give 0. γ = 1, GAE λ ≈ 0.95.
+   - Reward: this seat's **tai points only** (the payment table in RULES.md) at the end of the hand. Kong and animal instant payments are excluded by team decision: they are rare, small, and not what the platform teaches. The model still learns when kongs help through their effect on winning (replacement draw, kong-replacement tai, robbing risk). Points are scaled down (e.g. divided by 16, or a signed log) because a 64-point deal-in would otherwise swamp everything. Draws give 0. γ = 1, GAE λ ≈ 0.95.
    - **Asymmetric critic:** the value head may see the hidden hands (`oracle`) during training, the policy may not. This reduces variance a lot in imperfect-information games, and it's free here because the simulator knows everything. At play time only the policy is used.
    - Entropy bonus for exploration; keep the KL to the BC policy small at first so the agent doesn't forget how to play before RL has improved it.
    - Promote a checkpoint into the pool only when it beats the current pool in a duplicate tournament by more than 2 standard errors.
@@ -91,12 +91,12 @@ Use held-out seeds for every reported number, and never tune on the scenarios yo
 4. **How the website runs the model.** Plan to export the trained PyTorch network to ONNX and run it with onnxruntime (server) or onnxruntime-web (browser). Keep the network small enough for that (a few million parameters).
 5. **Observation versioning.** Every dataset records `obs_version` (now 2). Models must record which version they were trained on.
 
-### Rule questions still open
+### Rule decisions (settled 1 Oct 2026)
 
-- **Instant kong payments.** Many Singapore tables pay immediately for kongs. Not implemented.
-- **Concealed kongs:** the engine treats the tile as public. At some tables they are placed face down.
-- **Earthly hand:** implemented as a non-dealer winning on their first draw before any claim. Some tables define it as winning on the dealer's first discard.
-- Kong straight after a pong is not allowed. Robbing a concealed kong (for thirteen orphans) is not supported.
+- **Instant kong and animal payments:** real tables pay them, but they stay out of the training reward. Both become switchable rules for the website's score display; amounts to be confirmed when that is built.
+- **Concealed kongs** are face up, so the tile is public (as encoded).
+- **Earthly hand** = a non-dealer winning on their own first draw (as encoded).
+- Still as encoded, raise if your tables differ: no kong straight after a pong; no robbing a concealed kong.
 
 ### Known weaknesses in the current baselines
 

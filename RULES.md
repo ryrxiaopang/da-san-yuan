@@ -75,7 +75,8 @@ Unit price doubles per tai: 1, 2, 4, 8, 16 for 1–5 tai.
 
 ## Not implemented (can be switched on later)
 
-- Instant animal payments ("bites": cat + rat, rooster + centipede) and other instant flower payments.
+- **Instant kong payments.** The team's tables pay immediately for kongs. Planned as a switchable rule, **off for training**: the model learns from tai points only. The website can show kong payments in a game's running score once the amounts are settled.
+- **Instant animal payments** ("bites": cat + rat, rooster + centipede) and other instant flower payments. Same treatment as kong payments: switchable, off for training.
 - Bao / penalty rules for feeding a big hand.
 - Seven pairs is not a winning hand.
 - Self-draw itself adds no tai.
@@ -85,7 +86,10 @@ Unit price doubles per tai: 1, 2, 4, 8, 16 for 1–5 tai.
 - Men qing stacks with ping hu (concealed clean ping hu = 5 tai).
 - Ping hu table above.
 - Draw with 15 live tiles left.
-- No animal bites or bao.
+- No animal bites or bao in training.
+- Kong payments: real tables pay immediately, but training uses tai points only (switchable rule, off).
+- Concealed kongs are placed face up, so their tile is public (as encoded).
+- Earthly hand = a non-dealer winning on their own first draw, before any claim (as encoded).
 
 ## Data-generation conventions (not table rules)
 
