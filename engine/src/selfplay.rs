@@ -3,7 +3,7 @@
 
 use crate::bots::{Bot, HeuristicBot, Style};
 use crate::game::{Config, Game, HandResult};
-use crate::obs::{self, View, N_ACTIONS, OBS_LEN, ORACLE_LEN};
+use crate::obs::{self, View, N_ACTIONS, OBS_LEN, OBS_VERSION, ORACLE_LEN, SHANTEN_LEN, WAITS_LEN};
 use crate::rng::Rng;
 use crate::tile::*;
 use rayon::prelude::*;
@@ -48,6 +48,10 @@ pub struct Buffers {
     pub mask: Vec<u8>,
     pub action: Vec<u8>,
     pub oracle: Vec<u8>,
+    /// exact per-opponent winning tiles (tai) [3 x 34]
+    pub waits: Vec<u8>,
+    /// shanten of every seat, relative [4]
+    pub shanten: Vec<i8>,
     /// per decision: hand_id, seat, bot_id, points (filled after hand), won, dealt_in
     pub meta: Vec<i32>,
     pub rows: usize,
@@ -65,6 +69,11 @@ impl Buffers {
         let start = self.oracle.len();
         self.oracle.resize(start + ORACLE_LEN, 0);
         obs::encode_oracle(g, seat, &mut self.oracle[start..]);
+        let ws = self.waits.len();
+        self.waits.resize(ws + WAITS_LEN, 0);
+        let ss = self.shanten.len();
+        self.shanten.resize(ss + SHANTEN_LEN, 0);
+        obs::encode_labels(g, seat, &mut self.waits[ws..], &mut self.shanten[ss..]);
         self.meta.extend_from_slice(&[hand_id, seat as i32, bot_id, 0, 0, 0]);
         self.rows += 1;
     }
@@ -118,6 +127,11 @@ fn write_npy(path: &Path, descr: &str, shape: &[usize], body: &[u8], compress: b
 
 pub fn write_npy_u8(path: &Path, data: &[u8], shape: &[usize], compress: bool) -> std::io::Result<()> {
     write_npy(path, "|u1", shape, data, compress)
+}
+
+pub fn write_npy_i8(path: &Path, data: &[i8], shape: &[usize], compress: bool) -> std::io::Result<()> {
+    let body: Vec<u8> = data.iter().map(|&v| v as u8).collect();
+    write_npy(path, "|i1", shape, &body, compress)
 }
 
 pub fn write_npy_i32(path: &Path, data: &[i32], shape: &[usize], compress: bool) -> std::io::Result<()> {
@@ -185,7 +199,8 @@ fn hand_csv_row(hand_id: u64, seed: u64, cfg: &Config, names: &[String; 4], r: &
 
 /// Run self-play and write shards to `out_dir/shard_XXXXX/`:
 /// obs.npy [N, OBS_LEN] u8, mask.npy [N, 76] u8, action.npy [N] u8,
-/// oracle.npy [N, 102] u8, meta.npy [N, 6] i32 (each .npy.gz when compressed), hands.csv.
+/// oracle.npy [N, 102] u8, waits.npy [N, 3, 34] u8, shanten.npy [N, 4] i8,
+/// meta.npy [N, 6] i32 (each .npy.gz when compressed), hands.csv.
 pub fn run_selfplay(cfg: &SelfPlayConfig) -> std::io::Result<ShardSummary> {
     fs::create_dir_all(&cfg.out_dir)?;
     {
@@ -197,7 +212,11 @@ pub fn run_selfplay(cfg: &SelfPlayConfig) -> std::io::Result<ShardSummary> {
     }
     {
         let mut f = File::create(cfg.out_dir.join("format.txt"))?;
-        writeln!(f, "obs_len={}\nn_actions={}\noracle_len={}\nmeta_cols=hand_id,seat,bot_id,points,won,dealt_in", OBS_LEN, N_ACTIONS, ORACLE_LEN)?;
+        writeln!(
+            f,
+            "obs_version={}\nobs_len={}\nn_actions={}\noracle_len={}\nwaits_shape=3,34\nshanten_len={}\nmeta_cols=hand_id,seat,bot_id,points,won,dealt_in",
+            OBS_VERSION, OBS_LEN, N_ACTIONS, ORACLE_LEN, SHANTEN_LEN
+        )?;
         writeln!(f, "seed={}\nhands={}\nrandom_lineup={}", cfg.seed, cfg.hands, cfg.random_lineup)?;
     }
     let n_shards = cfg.hands.div_ceil(cfg.shard_size);
@@ -261,6 +280,8 @@ fn run_shard(cfg: &SelfPlayConfig, shard: u64, first: u64, last: u64) -> std::io
     write_npy_u8(&dir.join("mask.npy"), &buf.mask, &[n, N_ACTIONS], z)?;
     write_npy_u8(&dir.join("action.npy"), &buf.action, &[n], z)?;
     write_npy_u8(&dir.join("oracle.npy"), &buf.oracle, &[n, ORACLE_LEN], z)?;
+    write_npy_u8(&dir.join("waits.npy"), &buf.waits, &[n, 3, 34], z)?;
+    write_npy_i8(&dir.join("shanten.npy"), &buf.shanten, &[n, SHANTEN_LEN], z)?;
     write_npy_i32(&dir.join("meta.npy"), &buf.meta, &[n, META_COLS], z)?;
     summary.decisions = n;
     Ok(summary)

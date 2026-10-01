@@ -42,15 +42,27 @@ impl Default for Config {
     }
 }
 
+/// One discarded tile as everyone at the table saw it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Discard {
+    pub tile: Tile,
+    /// Later claimed by another player (pong/chow/kong/win).
+    pub claimed: bool,
+    /// The tile thrown was the one just drawn (tsumogiri), visible at a real table.
+    pub tsumogiri: bool,
+    /// Global action counter when it was discarded, to recover the order across players.
+    pub turn: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct Player {
     pub hand: Counts,
     pub bonus: Vec<Tile>,
     pub melds: Vec<Meld>,
-    /// Discards in order; `true` if the tile was later claimed by someone.
-    pub discards: Vec<(Tile, bool)>,
+    /// Discards in order.
+    pub discards: Vec<Discard>,
     pub draws: u32,
-    pending_bonus: usize,
+    pub(crate) pending_bonus: usize,
 }
 
 impl Default for Player {
@@ -143,6 +155,34 @@ impl Game {
             last_draw: false,
         };
         g.deal();
+        g
+    }
+
+    /// Build a mid-hand position directly (used by scenarios).
+    /// `wall` holds every tile; the first `front` are treated as already drawn.
+    /// For a Claim or RobKong phase only `decider` is asked; the other seats pass.
+    pub fn from_parts(
+        cfg: Config,
+        wall: Vec<Tile>,
+        front: usize,
+        players: [Player; 4],
+        phase: Phase,
+        decider: u8,
+        turns: u32,
+    ) -> Self {
+        assert_eq!(wall.len(), WALL_SIZE);
+        let back = wall.len();
+        let mut responses = [None; 4];
+        if matches!(phase, Phase::Claim { .. } | Phase::RobKong { .. }) {
+            for s in 0..4u8 {
+                if s != decider {
+                    responses[s as usize] = Some(Action::Pass);
+                }
+            }
+        }
+        let any_claim = players.iter().any(|p| p.melds.iter().any(|m| m.is_open()));
+        let mut g = Game { cfg, wall, front, back, players, phase, responses, result: None, any_claim, turns, last_draw: false };
+        g.last_draw = g.live_remaining() <= g.cfg.reserve;
         g
     }
 
@@ -312,6 +352,34 @@ impl Game {
         Some(best)
     }
 
+    /// Tai `seat` would score by winning on `tile` if it were discarded right now
+    /// (0 if that tile does not complete a hand worth at least the minimum).
+    /// This is exact ground truth that uses hidden information: use it for labels
+    /// and evaluation, never as an input to a policy.
+    pub fn ron_tai_if_discarded(&self, seat: u8, tile: Tile) -> u8 {
+        let p = &self.players[seat as usize];
+        if p.hand[tile as usize] >= 4 || p.hand_size() % 3 != 1 {
+            return 0;
+        }
+        let mut h = p.hand;
+        h[tile as usize] += 1;
+        if !scoring::is_complete_shape(&h, p.melds.len()) {
+            return 0;
+        }
+        let ctx = WinContext {
+            seat_wind: self.seat_wind(seat),
+            prevailing_wind: self.cfg.prevailing_wind,
+            self_draw: false,
+            win_tile: tile,
+            last_tile: self.last_draw,
+            ..Default::default()
+        };
+        match scoring::score_hand(&h, &p.melds, &p.bonus, &ctx) {
+            Some(s) if s.tai >= scoring::MIN_TAI => s.tai,
+            _ => 0,
+        }
+    }
+
     pub fn legal_actions(&self, seat: u8) -> Vec<Action> {
         let mut acts = Vec::new();
         let p = &self.players[seat as usize];
@@ -408,9 +476,11 @@ impl Game {
                 self.finish(Some(seat), None, Some(score));
             }
             Action::Discard(t) => {
+                let tsumogiri = matches!(self.phase, Phase::SelfTurn { drawn: Some(d), .. } if d == t);
+                let turn = self.turns;
                 let p = &mut self.players[seat as usize];
                 p.hand[t as usize] -= 1;
-                p.discards.push((t, false));
+                p.discards.push(Discard { tile: t, claimed: false, tsumogiri, turn });
                 self.open_window(Phase::Claim { from: seat, tile: t }, seat);
             }
             Action::Kong(t) => {
@@ -540,7 +610,7 @@ impl Game {
 
     fn mark_claimed(&mut self, from: u8) {
         if let Some(last) = self.players[from as usize].discards.last_mut() {
-            last.1 = true;
+            last.claimed = true;
         }
     }
 
@@ -569,9 +639,9 @@ impl Game {
                     seen[t as usize] += 1;
                 }
             }
-            for &(t, claimed) in &p.discards {
-                if !claimed {
-                    seen[t as usize] += 1;
+            for d in &p.discards {
+                if !d.claimed {
+                    seen[d.tile as usize] += 1;
                 }
             }
         }
@@ -592,7 +662,7 @@ impl Game {
             for m in &p.melds {
                 held += m.tiles().len();
             }
-            held += p.discards.iter().filter(|d| !d.1).count();
+            held += p.discards.iter().filter(|d| !d.claimed).count();
         }
         (drawn, held)
     }

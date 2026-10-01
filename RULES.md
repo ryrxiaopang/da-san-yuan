@@ -38,8 +38,8 @@ This is the exact ruleset the engine, bots and training data follow. If your tab
 | Men qing (no pong / chow / exposed kong) | 1 | Concealed kongs allowed. Applies to discard and self-draw wins |
 | All pongs (pong pong hu) | 2 | |
 | Half flush (one suit + honours) | 2 | |
-| Ping hu, no bonus tiles | 4 | See definition below |
-| Ping hu with only non-scoring flowers | 1 | Flowers that don't match your seat; no animals |
+| Ping hu | 4 | See definition below. Fully concealed: also allowed with non-scoring flowers |
+| Open ping hu with only non-scoring flowers | 1 | Exposed chows + flowers that don't match your seat |
 | Small three dragons | 4 | Two dragon pongs + dragon pair; replaces the dragon pong tai |
 | Small four winds | 4 | Three wind pongs + wind pair; replaces the wind pong tai |
 | Win on kong replacement tile | 1 | |
@@ -50,7 +50,14 @@ This is the exact ruleset the engine, bots and training data follow. If your tab
 
 Tai from every pattern is added up, then capped at 5. When a hand can be read more than one way, the highest-scoring reading counts.
 
-**Ping hu** means all four sets are chows, the pair is not a dragon, your seat wind or the prevailing wind, and the winning tile completed a chow from a two-sided wait (not an edge, middle or pair wait). Exposed chows are allowed. If you hold any scoring bonus tile (a matching flower or an animal), ping hu is not counted and the bonus tiles score instead.
+**Ping hu** means all four sets are chows, the pair is not a dragon, your seat wind or the prevailing wind, and the winning tile completed a chow from a two-sided wait (not an edge, middle or pair wait).
+
+| Ping hu hand | Bonus tiles held | Tai |
+|---|---|---|
+| Fully concealed | none, or only non-matching flowers | 4 + 1 men qing = 5 |
+| With exposed chows | none | 4 |
+| With exposed chows | only non-matching flowers | 1 |
+| Either | any matching flower, animal or full flower set | ping hu not counted; the bonus tiles score instead |
 
 **Four concealed pongs**: a pong completed by someone else's discard counts as exposed, so it needs a self-draw or a pair wait.
 
@@ -73,11 +80,13 @@ Unit price doubles per tai: 1, 2, 4, 8, 16 for 1–5 tai.
 - Seven pairs is not a winning hand.
 - Self-draw itself adds no tai.
 
-## Please confirm with your table
+## Confirmed with the team (1 Oct 2026)
 
-These were judgement calls. Each one changes what the bots learn:
+- Men qing stacks with ping hu (concealed clean ping hu = 5 tai).
+- Ping hu table above.
+- Draw with 15 live tiles left.
+- No animal bites or bao.
 
-1. **Men qing stacks with ping hu**, so a fully concealed, clean ping hu is 4 + 1 = 5 tai. Some tables treat ping hu as already including concealment.
-2. Ping hu is allowed with **exposed chows**.
-3. The draw happens with **15 tiles** left.
-4. In generated data the **dealer rotates every hand** and the prevailing wind changes every 4 hands, so all seats and winds appear evenly. Real games keep the dealer after a dealer win; that only matters for match-level play, not for single-hand decisions.
+## Data-generation conventions (not table rules)
+
+In generated data the dealer rotates every hand and the prevailing wind changes every 4 hands, so all seats and winds appear evenly. Real games keep the dealer after a dealer win; that only matters for match-level play, not single-hand decisions.

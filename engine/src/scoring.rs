@@ -176,7 +176,7 @@ impl Pattern {
             AllPongs => "All pongs (pong pong hu)",
             HalfFlush => "Half flush",
             PingHu => "Ping hu",
-            PingHuWithFlowers => "Ping hu with non-scoring flowers",
+            PingHuWithFlowers => "Open ping hu with non-scoring flowers",
             MenQing => "Men qing (fully concealed)",
             SmallThreeDragons => "Small three dragons",
             SmallFourWinds => "Small four winds",
@@ -414,10 +414,16 @@ pub fn score_hand(concealed: &Counts, melds: &[Meld], bonus: &[Tile], ctx: &WinC
                     None => false,
                 };
                 if two_sided {
-                    if !has_bonus {
-                        items.push((Pattern::PingHu, 4));
-                    } else if btai == 0 {
-                        items.push((Pattern::PingHuWithFlowers, 1));
+                    // Scoring bonus tiles (seat flower, animal, flower set) void ping hu.
+                    // Non-scoring flowers: a fully concealed ping hu keeps its 4 tai,
+                    // an open one (exposed chows) drops to 1 tai.
+                    let concealed_hand = n_melds == 0;
+                    if btai == 0 {
+                        if !has_bonus || concealed_hand {
+                            items.push((Pattern::PingHu, 4));
+                        } else {
+                            items.push((Pattern::PingHuWithFlowers, 1));
+                        }
                     }
                 }
             }

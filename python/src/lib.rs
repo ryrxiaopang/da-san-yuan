@@ -3,7 +3,8 @@
 
 use dsy_engine::bots::{Bot, HeuristicBot, Style};
 use dsy_engine::game::{Config, Game};
-use dsy_engine::obs::{self, View, N_ACTIONS, OBS_LEN, ORACLE_LEN};
+use dsy_engine::obs::{self, View, N_ACTIONS, OBS_LEN, ORACLE_LEN, SHANTEN_LEN, WAITS_LEN};
+use dsy_engine::scenario::{self, Scenario};
 use dsy_engine::selfplay::{self, SelfPlayConfig};
 use dsy_engine::tile::hand_string;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -57,6 +58,15 @@ impl Env {
         let mut buf = vec![0u8; ORACLE_LEN];
         obs::encode_oracle(&self.game, seat, &mut buf);
         PyBytes::new_bound(py, &buf)
+    }
+
+    /// Exact labels (hidden information): (waits [3*34] u8 tai, shanten [4] i8 as bytes).
+    fn labels_bytes<'py>(&self, py: Python<'py>, seat: u8) -> (Bound<'py, PyBytes>, Bound<'py, PyBytes>) {
+        let mut w = vec![0u8; WAITS_LEN];
+        let mut sh = vec![0i8; SHANTEN_LEN];
+        obs::encode_labels(&self.game, seat, &mut w, &mut sh);
+        let shb: Vec<u8> = sh.iter().map(|&x| x as u8).collect();
+        (PyBytes::new_bound(py, &w), PyBytes::new_bound(py, &shb))
     }
 
     fn mask_bytes<'py>(&self, py: Python<'py>, seat: u8) -> Bound<'py, PyBytes> {
@@ -128,6 +138,48 @@ impl Env {
     }
 }
 
+/// The scenario bank: hand-built positions with checkable expectations.
+#[pyclass(module = "dasanyuan._core")]
+struct ScenarioBank {
+    items: Vec<(String, Scenario)>,
+}
+
+#[pymethods]
+impl ScenarioBank {
+    #[new]
+    fn new(dir: String) -> PyResult<Self> {
+        let items = scenario::load_dir(std::path::Path::new(&dir)).map_err(PyValueError::new_err)?;
+        for (f, sc) in &items {
+            sc.validate().map_err(|e| PyValueError::new_err(format!("{}:{}: {}", f, sc.name, e)))?;
+        }
+        Ok(ScenarioBank { items })
+    }
+    fn __len__(&self) -> usize {
+        self.items.len()
+    }
+    /// (file, name, description, tags, hero seat)
+    fn info(&self, i: usize) -> PyResult<(String, String, String, Vec<String>, u8)> {
+        let (f, s) = self.items.get(i).ok_or_else(|| PyValueError::new_err("index out of range"))?;
+        Ok((f.clone(), s.name.clone(), s.desc.clone(), s.tags.clone(), s.hero))
+    }
+    /// A fresh Env positioned at scenario `i`; the hero is the seat to act.
+    fn env(&self, i: usize) -> PyResult<Env> {
+        let (_, s) = self.items.get(i).ok_or_else(|| PyValueError::new_err("index out of range"))?;
+        let game = s.build().map_err(PyValueError::new_err)?;
+        Ok(Env { game, bots: HashMap::new(), seed: i as u64 })
+    }
+    /// Check an action index for scenario `i`: (passed, message).
+    fn check(&self, i: usize, action: usize) -> PyResult<(bool, String)> {
+        let (_, s) = self.items.get(i).ok_or_else(|| PyValueError::new_err("index out of range"))?;
+        let game = s.build().map_err(PyValueError::new_err)?;
+        let a = obs::action_from_index(action).ok_or_else(|| PyValueError::new_err("bad action index"))?;
+        Ok(match s.check(&game, a) {
+            Ok(()) => (true, String::new()),
+            Err(e) => (false, e),
+        })
+    }
+}
+
 #[pyfunction]
 fn obs_len() -> usize {
     OBS_LEN
@@ -195,6 +247,7 @@ fn tournament<'py>(py: Python<'py>, styles: Vec<String>, walls: u64, seed: u64) 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Env>()?;
+    m.add_class::<ScenarioBank>()?;
     m.add_function(wrap_pyfunction!(obs_len, m)?)?;
     m.add_function(wrap_pyfunction!(n_actions, m)?)?;
     m.add_function(wrap_pyfunction!(oracle_len, m)?)?;

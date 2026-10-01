@@ -87,6 +87,20 @@ enum Cmd {
         #[arg(long)]
         tsumo: bool,
     },
+    /// Run the scenario bank: validate positions and score bots on them.
+    Scenarios {
+        #[arg(long, default_value = "scenarios")]
+        dir: PathBuf,
+        /// Comma-separated bots to test (styles, "efficiency" or "random").
+        #[arg(long, default_value = "random,efficiency,fast,high_tai,defensive,balanced")]
+        bots: String,
+        /// Print every scenario result, not just the summary.
+        #[arg(long)]
+        verbose: bool,
+        /// Runs per bot with different bot seeds (random/noisy bots vary).
+        #[arg(long, default_value_t = 20)]
+        trials: u64,
+    },
     /// Measure engine + bot throughput.
     Bench {
         #[arg(long, default_value_t = 2_000)]
@@ -250,6 +264,65 @@ fn main() {
                         }
                     }
                 }
+            }
+        }
+        Cmd::Scenarios { dir, bots, verbose, trials } => {
+            let list = dsy_engine::scenario::load_dir(&dir).unwrap_or_else(|e| panic!("{}", e));
+            let mut invalid = 0;
+            for (file, sc) in &list {
+                if let Err(e) = sc.validate() {
+                    println!("INVALID {}:{} -> {}", file, sc.name, e);
+                    invalid += 1;
+                }
+            }
+            println!("{} scenarios loaded, {} invalid. Pass rate over {} runs per bot.", list.len(), invalid, trials);
+            if invalid > 0 {
+                std::process::exit(1);
+            }
+            let names: Vec<&str> = bots.split(',').map(|x| x.trim()).collect();
+            println!("\n{:<30}{}", "scenario", names.iter().map(|n| format!("{:>11}", n)).collect::<String>());
+            let mut totals = vec![0f64; names.len()];
+            let mut by_tag: std::collections::BTreeMap<String, Vec<(f64, usize)>> = Default::default();
+            for (_, sc) in &list {
+                let mut row = format!("{:<30}", sc.name);
+                let mut notes = Vec::new();
+                for (bi, n) in names.iter().enumerate() {
+                    let g = sc.build().unwrap();
+                    let mut passes = 0;
+                    let mut first_err = None;
+                    for seed in 1..=trials {
+                        let mut bot = dsy_engine::bots::make_bot(n, seed).unwrap_or_else(|| panic!("unknown bot {}", n));
+                        let a = bot.act(&dsy_engine::obs::View::new(&g, sc.hero));
+                        match sc.check(&g, a) {
+                            Ok(()) => passes += 1,
+                            Err(e) => {
+                                first_err.get_or_insert(e);
+                            }
+                        }
+                    }
+                    let rate = passes as f64 / trials as f64;
+                    totals[bi] += rate;
+                    if let Some(e) = first_err {
+                        notes.push(format!("    {}: {}", n, e));
+                    }
+                    for t in &sc.tags {
+                        let e = by_tag.entry(t.clone()).or_insert_with(|| vec![(0.0, 0); names.len()]);
+                        e[bi].0 += rate;
+                        e[bi].1 += 1;
+                    }
+                    row.push_str(&format!("{:>10.0}%", 100.0 * rate));
+                }
+                println!("{}", row);
+                if verbose {
+                    for n in notes {
+                        println!("{}", n);
+                    }
+                }
+            }
+            let n = list.len() as f64;
+            println!("{:<30}{}", "OVERALL", totals.iter().map(|t| format!("{:>10.0}%", 100.0 * t / n)).collect::<String>());
+            for (tag, v) in by_tag {
+                println!("{:<30}{}", format!("  [{}]", tag), v.iter().map(|(a, b)| format!("{:>10.0}%", 100.0 * a / *b as f64)).collect::<String>());
             }
         }
         Cmd::Bench { hands } => {

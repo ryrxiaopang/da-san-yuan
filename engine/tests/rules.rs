@@ -66,12 +66,25 @@ fn ping_hu_needs_two_sided_wait() {
 }
 
 #[test]
-fn ping_hu_with_non_matching_flowers_is_one_tai() {
+fn concealed_ping_hu_with_non_matching_flowers_keeps_four_tai() {
     // seat South (1) -> matching flowers are f2/g2. f1 does not match.
     let s = score("123m456p789s123s99m f1", "1s", &[], 1, 0, false).unwrap();
+    assert!(has(&s, Pattern::PingHu));
+    assert!(has(&s, Pattern::MenQing));
+    assert_eq!(s.raw_tai, 5); // 4 ping hu + 1 men qing
+}
+
+#[test]
+fn open_ping_hu() {
+    // exposed chow, no bonus tiles -> 4 tai, no men qing
+    let s = score("456p789s123s99m", "1s", &[chow("1m")], 1, 0, false).unwrap();
+    assert!(has(&s, Pattern::PingHu));
+    assert!(!has(&s, Pattern::MenQing));
+    assert_eq!(s.raw_tai, 4);
+    // exposed chow with a non-matching flower -> 1 tai
+    let s = score("456p789s123s99m f1", "1s", &[chow("1m")], 1, 0, false).unwrap();
     assert!(has(&s, Pattern::PingHuWithFlowers));
-    assert!(!has(&s, Pattern::PingHu));
-    assert_eq!(s.raw_tai, 2); // 1 ping hu w/ flowers + 1 men qing
+    assert_eq!(s.raw_tai, 1);
 }
 
 #[test]
@@ -79,6 +92,9 @@ fn ping_hu_void_with_scoring_bonus() {
     let s = score("123m456p789s123s99m f2", "1s", &[], 1, 0, false).unwrap();
     assert!(!has(&s, Pattern::PingHu) && !has(&s, Pattern::PingHuWithFlowers));
     assert!(has(&s, Pattern::SeatFlower));
+    // animals also void it
+    let s = score("123m456p789s123s99m a3", "1s", &[], 1, 0, false).unwrap();
+    assert!(!has(&s, Pattern::PingHu) && !has(&s, Pattern::PingHuWithFlowers));
 }
 
 #[test]
@@ -303,4 +319,55 @@ fn claim_priority_ron_beats_pong() {
         }
     }
     assert!(found, "no ron-vs-pong situation found in 4000 seeds");
+}
+
+// ------------------------------------------------- labels and scenario bank
+
+#[test]
+fn wait_labels_match_actual_wins() {
+    // Whenever someone wins on a discard, the label recorded at the discarder's
+    // decision must say that tile wins for that opponent, for exactly that many tai.
+    let mut checked = 0;
+    for seed in 0..1500u64 {
+        let mut bots: [Box<dyn Bot>; 4] =
+            std::array::from_fn(|i| Box::new(HeuristicBot::new(Style::archetypes()[i].clone(), seed)) as Box<dyn Bot>);
+        let mut last: Option<(u8, Tile, Vec<u8>)> = None;
+        let (_, r) = play_hand(Game::new(Config::default(), seed), &mut bots, |g, seat, a| {
+            if let Action::Discard(t) = a {
+                let mut w = vec![0u8; obs::WAITS_LEN];
+                let mut sh = vec![0i8; obs::SHANTEN_LEN];
+                obs::encode_labels(g, seat, &mut w, &mut sh);
+                // own shanten label equals a direct computation
+                let p = &g.players[seat as usize];
+                assert_eq!(sh[0] as i32, dsy_engine::shanten::shanten(&p.hand, p.melds_needed()).clamp(-1, 8));
+                last = Some((seat, t, w));
+            }
+        });
+        if let (Some(w), Some(d), Some(s)) = (r.winner, r.discarder, r.score.as_ref()) {
+            let (seat, t, labels) = last.clone().unwrap();
+            if seat == d && !s.items.iter().any(|(p, _)| *p == Pattern::RobbingKong) {
+                let rel = ((w + 4 - d) % 4) as usize;
+                assert_eq!(labels[(rel - 1) * 34 + t as usize], s.tai, "seed {}", seed);
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 100, "only {} discard wins checked", checked);
+}
+
+#[test]
+fn scenario_bank_is_valid_and_rules_hold() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scenarios");
+    let list = dsy_engine::scenario::load_dir(&dir).unwrap();
+    assert!(list.len() >= 10);
+    for (file, sc) in &list {
+        sc.validate().unwrap_or_else(|e| panic!("{}:{} invalid: {}", file, sc.name, e));
+        // Rule scenarios test the engine itself, so any sensible policy must pass them.
+        if sc.tags.iter().any(|t| t == "rules") {
+            let g = sc.build().unwrap();
+            let mut bot = dsy_engine::bots::EfficiencyBot;
+            let a = bot.act(&View::new(&g, sc.hero));
+            sc.check(&g, a).unwrap_or_else(|e| panic!("rule scenario {} failed: {}", sc.name, e));
+        }
+    }
 }

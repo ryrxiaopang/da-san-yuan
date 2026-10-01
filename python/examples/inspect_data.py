@@ -56,3 +56,23 @@ print("\ntai distribution of wins:", {k: f"{100 * v / wins:.1f}%" for k, v in so
 print("most common patterns:")
 for p, c in pats.most_common(12):
     print(f"  {p:<34}{100 * c / wins:5.1f}% of wins")
+
+# ---- opponent-reading labels: how often is the table dangerous, and do bots avoid it?
+waits, shanten = data["waits"], data["shanten"]
+ready = shanten[:, 1:] == 0
+print(f"\ndecisions where at least one opponent is ready: {100 * ready.any(1).mean():.1f}%")
+is_discard = act < 34
+d_idx = np.flatnonzero(is_discard)
+tile = act[d_idx]
+danger = waits[d_idx].max(1)            # [n, 34] max tai over opponents
+chosen_danger = danger[np.arange(len(d_idx)), tile] > 0
+legal_discards = mask[d_idx, :34] == 1
+frac_danger = ((danger > 0) & legal_discards).sum(1) / np.maximum(legal_discards.sum(1), 1)
+threat = frac_danger > 0
+print(f"discards made while some discard could deal in: {100 * threat.mean():.1f}%")
+print(f"  of those, chosen tile dealt in: {100 * chosen_danger[threat].mean():.1f}% "
+      f"(random choice would: {100 * frac_danger[threat].mean():.1f}%)")
+for b, name in bots.items():
+    sel = threat & (meta[d_idx, 2] == b)
+    if sel.any():
+        print(f"  {name:<12} chose a deal-in tile {100 * chosen_danger[sel].mean():5.1f}% vs random {100 * frac_danger[sel].mean():5.1f}%")

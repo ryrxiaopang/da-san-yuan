@@ -40,6 +40,8 @@ def test_selfplay_roundtrip(tmp_path):
     assert hands == 40
     data = dsy.load_shards(str(tmp_path))
     n = data["action"].shape[0]
+    assert data["waits"].shape == (n, 3, 34)
+    assert data["shanten"].shape == (n, 4)
     assert n == decisions
     assert data["obs"].shape == (n, dsy.OBS_LEN)
     assert data["oracle"].shape == (n, dsy.ORACLE_LEN)
@@ -58,3 +60,25 @@ def test_tournament_runs():
     res = dsy.tournament(["fast", "high_tai", "defensive", "balanced"], walls=20)
     assert len(res) == 4
     assert abs(sum(r["points_per_hand"] for r in res)) < 1e-9
+
+
+def test_labels_shapes():
+    env = dsy.Env(seed=4)
+    w, sh = env.labels(env.to_act())
+    assert w.shape == (3, 34) and sh.shape == (4,)
+
+
+def test_scenario_bank():
+    import os
+    here = os.path.dirname(__file__)
+    bank = dsy.Scenarios(os.path.join(here, "..", "..", "scenarios"))
+    assert len(bank) >= 10
+    for i in range(len(bank)):
+        info = bank.info(i)
+        env = bank.env(i)
+        seat = env.to_act()
+        assert seat == info["hero"]
+        a = env.bot_action(seat, "high_tai")
+        ok, msg = bank.check(i, a)
+        if "rules" in info["tags"]:
+            assert ok, (info["name"], msg)

@@ -126,6 +126,8 @@ struct Ctx<'a> {
     /// discards seen from each opponent, for safety
     opp_discards: [u64; 4],
     threat_by_seat: [f32; 4],
+    /// Suit an opponent appears to be collecting for a flush (from their melds).
+    suit_focus: [Option<u8>; 4],
     me: u8,
 }
 
@@ -201,10 +203,16 @@ fn danger(t: Tile, ctx: &Ctx) -> f32 {
             _ => 0.45,
         }
     } else {
-        match rank(t) {
+        let r = match rank(t) {
             0 | 8 => 0.5,
             1 | 7 => 0.75,
             _ => 1.0,
+        };
+        // No unseen copies: nobody can be waiting on it as a pair or pong, only in a sequence.
+        if ctx.unseen[t as usize] == 0 {
+            r * 0.6
+        } else {
+            r
         }
     };
     let mut d = 0.0;
@@ -218,7 +226,18 @@ fn danger(t: Tile, ctx: &Ctx) -> f32 {
         }
         // Tiles an opponent threw recently are less likely to be what they wait on.
         let safe = ctx.opp_discards[s as usize] & (1u64 << t) != 0;
-        d += w * base * if safe { 0.25 } else { 1.0 };
+        // Flush read: an opponent whose melds are all one suit wants that suit (and honours).
+        let focus = match ctx.suit_focus[s as usize] {
+            Some(f) if is_suited(t) => {
+                if suit(t) == f {
+                    2.0
+                } else {
+                    0.3
+                }
+            }
+            _ => 1.0,
+        };
+        d += w * base * focus * if safe { 0.25 } else { 1.0 };
     }
     d
 }
@@ -241,6 +260,7 @@ impl HeuristicBot {
         let (bt, _) = bonus_tai(v.my_bonus(), v.seat_wind());
         let mut threat_by_seat = [0f32; 4];
         let mut opp_discards = [0u64; 4];
+        let mut suit_focus = [None; 4];
         let late = 1.0 - (v.draws_left() as f32 / 80.0).min(1.0);
         for s in 0..4u8 {
             if s == me {
@@ -250,8 +270,18 @@ impl HeuristicBot {
             let small_hand = v.hand_size_of(s) <= 7;
             threat_by_seat[s as usize] = (open * 0.3 + late * 0.6 + if small_hand { 0.4 } else { 0.0 } - 0.35).max(0.0);
             let d = v.discards_of(s);
-            for &(t, _) in d.iter().rev().take(8) {
-                opp_discards[s as usize] |= 1u64 << t;
+            for x in d.iter().rev().take(8) {
+                opp_discards[s as usize] |= 1u64 << x.tile;
+            }
+            let melds = v.melds_of(s);
+            let suits: Vec<u8> = melds.iter().filter(|m| is_suited(m.tile)).map(|m| suit(m.tile)).collect();
+            if melds.len() >= 2 && !suits.is_empty() && suits.iter().all(|&x| x == suits[0]) {
+                // and they have not been throwing that suit away
+                let thrown = d.iter().rev().take(10).filter(|x| is_suited(x.tile) && suit(x.tile) == suits[0]).count();
+                if thrown <= 1 {
+                    suit_focus[s as usize] = Some(suits[0]);
+                    threat_by_seat[s as usize] += 0.3;
+                }
             }
         }
         Ctx {
@@ -263,6 +293,7 @@ impl HeuristicBot {
             threat: threat_by_seat.iter().sum(),
             opp_discards,
             threat_by_seat,
+            suit_focus,
             me,
         }
     }
@@ -450,9 +481,35 @@ impl Bot for RandomBot {
     }
 }
 
+/// Pure tile efficiency: always wins when it can, never claims, and discards the
+/// tile that keeps the lowest shanten with the most useful tiles. No defence, no
+/// tai planning. The baseline every learned model must beat on the scenario bank.
+pub struct EfficiencyBot;
+impl Bot for EfficiencyBot {
+    fn act(&mut self, v: &View) -> Action {
+        let acts = v.legal_actions();
+        for w in [Action::Tsumo, Action::Ron] {
+            if acts.contains(&w) {
+                return w;
+            }
+        }
+        if matches!(v.phase(), Phase::SelfTurn { .. }) {
+            let r = crate::scenario::efficiency_ranking(v);
+            return Action::Discard(r[0].0);
+        }
+        Action::Pass
+    }
+    fn name(&self) -> String {
+        "efficiency".into()
+    }
+}
+
 pub fn make_bot(name: &str, seed: u64) -> Option<Box<dyn Bot>> {
     if name == "random" {
         return Some(Box::new(RandomBot::new(seed)));
+    }
+    if name == "efficiency" {
+        return Some(Box::new(EfficiencyBot));
     }
     Style::by_name(name).map(|s| Box::new(HeuristicBot::new(s, seed)) as Box<dyn Bot>)
 }

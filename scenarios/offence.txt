@@ -1,0 +1,99 @@
+# Offence, tai planning and rule scenarios.
+
+name: take-the-ron
+desc: Hero is waiting on 9m with a concealed hand (men qing gives 1 tai). 9m is discarded.
+tags: rules
+phase: claim 9m from 2
+hand.0: 123m 456p 789s 234s 9m
+expect: win
+---
+name: take-the-tsumo
+desc: Hero draws the winning tile.
+tags: rules
+phase: turn
+drawn: 9m
+hand.0: 123m 456p 789s 234s 99m
+expect: win
+---
+name: no-tai-no-win
+desc: Open hand with no tai source completes on a pair wait. 0 tai, so the engine must not allow the win.
+tags: rules
+phase: claim 9m from 2
+melds.0: chow:123p from 3
+hand.0: 456m 789s 234s 9m
+expect: no_win_offered
+expect: pass
+---
+name: open-ping-hu-with-flower
+desc: Exposed chow, a non-matching flower and a two-sided wait: open ping hu with flowers is 1 tai, so the win is allowed.
+tags: rules
+phase: claim 1s from 2
+melds.0: chow:123p from 3
+hand.0: 456m 789s 23s 99m
+bonus.0: f2
+expect: win
+---
+name: rob-the-kong
+desc: Opposite player adds a 4th 4p to their pong. Hero waits on 4p and can rob the kong.
+tags: rules
+phase: rob 4p from 2
+melds.2: pong:444p from 1
+hand.0: 123m 456s 789s 35p 99m
+expect: win
+---
+name: dont-open-without-tai
+desc: A weak hand whose only easy tai is men qing. Chowing 4m would leave it with no route to the 1-tai minimum.
+tags: tai-planning
+phase: claim 4m from 3
+hand.0: 56m 1p 4p 7p 2s 5s 8s 1z 2z 9m 9p 3s
+expect: pass
+---
+name: pong-the-dragon
+desc: Ponging a dragon secures 1 tai and speeds the hand up.
+tags: tai-planning
+phase: claim 5z from 2
+hand.0: 5z 5z 123m 456p 78s 9p 1s 4m
+expect: any_of pong
+---
+name: keep-the-dragon-pair
+desc: Hero has opened the hand, so the dragon pair is the only route to tai. Don't break it.
+tags: tai-planning
+phase: turn
+melds.0: chow:345m from 3
+hand.0: 5z 5z 2p 3p 7p 8p 1s 2s 9s 6m 7m
+expect: none_of discard 5z
+---
+name: throw-the-dead-honour
+desc: Basic tile efficiency: the North wind is useless to the hero (not their wind, two copies gone). Keep the connected shapes.
+tags: efficiency
+phase: turn
+discards.1: 4z
+discards.3: 4z
+hand.0: 123m 456p 78s 99m 4z 35p 2s
+expect: max_ukeire
+---
+name: early-game-play-efficiently
+desc: Early in the hand with no threats on the table. There is nothing to defend against, so keep the most useful shape.
+tags: push
+draws_left: 60
+phase: turn
+hand.0: 123m 456p 78s 99m 35p 2s 9p
+expect: max_ukeire
+---
+name: push-the-nine-gates
+desc: One discard from a 5-tai nine gates wait while one opponent has a single pong. A huge hand is worth the risk.
+tags: push
+draws_left: 30
+phase: turn
+melds.1: pong:333z from 0
+hand.0: 1112345678999m 5z
+expect: any_of discard 5z
+---
+name: mid-game-one-shanten
+desc: One tile from ready in mid game; the only visible threat is a single chow. Keep building.
+tags: push
+draws_left: 35
+phase: turn
+melds.2: chow:234p from 1
+hand.0: 123m 456m 789p 34s 67s 1z
+expect: max_ukeire

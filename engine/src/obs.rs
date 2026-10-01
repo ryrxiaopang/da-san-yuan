@@ -3,7 +3,7 @@
 //! acting player can legally see, except `encode_oracle`, which is stored
 //! separately for oracle guiding / opponent-modelling targets.
 
-use crate::game::{Action, Game, Phase};
+use crate::game::{Action, Discard, Game, Phase};
 use crate::scoring::{Meld, MeldKind};
 use crate::tile::*;
 
@@ -65,15 +65,20 @@ pub fn legal_mask(g: &Game, seat: u8) -> [u8; N_ACTIONS] {
 
 // ------------------------------------------------------------- observation
 
+/// Bump when the observation layout changes; written to every dataset's format.txt.
+pub const OBS_VERSION: u32 = 2;
+
 pub const MAX_DISCARD_SEQ: usize = 32;
 
 pub const OFF_HAND: usize = 0;
 pub const OFF_MELD_COUNTS: usize = OFF_HAND + 34; // 4 x 34
 pub const OFF_DISCARD_COUNTS: usize = OFF_MELD_COUNTS + 4 * 34; // 4 x 34
-pub const OFF_DISCARD_SEQ: usize = OFF_DISCARD_COUNTS + 4 * 34; // 4 x 32
-pub const OFF_BONUS: usize = OFF_DISCARD_SEQ + 4 * MAX_DISCARD_SEQ; // 4 x 12
-pub const OFF_MELDS: usize = OFF_BONUS + 4 * NUM_BONUS; // 4 x 4 x 2
-pub const OFF_META: usize = OFF_MELDS + 4 * 4 * 2;
+pub const OFF_DISCARD_SEQ: usize = OFF_DISCARD_COUNTS + 4 * 34; // 4 x 32 tile codes
+pub const OFF_DISCARD_TURN: usize = OFF_DISCARD_SEQ + 4 * MAX_DISCARD_SEQ; // 4 x 32 turn indices
+pub const OFF_BONUS: usize = OFF_DISCARD_TURN + 4 * MAX_DISCARD_SEQ; // 4 x 12
+pub const OFF_MELDS: usize = OFF_BONUS + 4 * NUM_BONUS; // 4 x 4 x 3
+pub const MELD_BYTES: usize = 3;
+pub const OFF_META: usize = OFF_MELDS + 4 * 4 * MELD_BYTES;
 pub const META_LEN: usize = 14;
 pub const OBS_LEN: usize = OFF_META + META_LEN;
 
@@ -82,6 +87,8 @@ pub const ORACLE_LEN: usize = 3 * 34;
 pub const EMPTY: u8 = 255;
 /// Added to a tile id in the discard sequence when that discard was claimed.
 pub const CLAIMED_FLAG: u8 = 64;
+/// Added to a tile id in the discard sequence when the player threw the tile they just drew.
+pub const TSUMOGIRI_FLAG: u8 = 128;
 
 /// Relative seat: 0 = self, 1 = next (right, plays after you), 2 = opposite, 3 = previous (left).
 #[inline]
@@ -103,15 +110,19 @@ fn meld_code(m: &Meld) -> u8 {
     }
 }
 
-/// Encode what `seat` can see into a flat u8 vector of length OBS_LEN.
-/// Layout (all seats relative: 0 = self, 1 = next, 2 = opposite, 3 = previous):
-///   hand counts [34] | meld tile counts [4][34] | discard counts [4][34]
-///   | discard sequences [4][32] (tile id, +64 if claimed, 255 = empty)
-///   | bonus tiles held [4][12] (0/1) | melds [4][4][kind, tile]
-///   | meta [14]: seat wind, prevailing wind, dealer (rel), draws left,
-///     turn (capped 255), phase (0 own turn, 1 claim, 2 rob kong),
-///     target tile (drawn/claimable tile or 255), target seat (rel or 255),
-///     after kong, after claim, last draw, concealed tile counts of seats 1..3
+/// Encode what `seat` can see into a flat u8 vector of length OBS_LEN (version 2).
+/// All seats are relative: 0 = self, 1 = next, 2 = opposite, 3 = previous.
+///
+/// | offset             | size     | content |
+/// |--------------------|----------|---------|
+/// | OFF_HAND           | 34       | own concealed tile counts |
+/// | OFF_MELD_COUNTS    | 4 x 34   | tiles in each player's melds |
+/// | OFF_DISCARD_COUNTS | 4 x 34   | tiles each player has discarded (claimed ones included) |
+/// | OFF_DISCARD_SEQ    | 4 x 32   | discards in order: tile id, +64 if claimed, +128 if tsumogiri, 255 empty |
+/// | OFF_DISCARD_TURN   | 4 x 32   | global turn of each discard (capped 254, 255 empty): recovers the order across players |
+/// | OFF_BONUS          | 4 x 12   | bonus tiles each player has shown (0/1) |
+/// | OFF_MELDS          | 4 x 4 x 3| melds: kind (1 chow, 2 pong, 3 exposed kong, 4 added kong, 5 concealed kong), tile, source seat (rel, 255 none) |
+/// | OFF_META           | 14       | seat wind, prevailing wind, dealer (rel), draws left, turn (cap 255), phase (0 own turn, 1 claim, 2 rob kong), target tile, target seat (rel), after kong, after claim, last draw, concealed tile counts of seats 1..3 |
 pub fn encode_obs(g: &Game, seat: u8, out: &mut [u8]) {
     debug_assert!(out.len() >= OBS_LEN);
     out[..OBS_LEN].fill(0);
@@ -122,26 +133,45 @@ pub fn encode_obs(g: &Game, seat: u8, out: &mut [u8]) {
     for (abs, p) in g.players.iter().enumerate() {
         let r = rel(seat, abs as u8);
         for m in &p.melds {
-            // Concealed kongs are shown face-down at many tables but the kind is public.
+            // Concealed kongs are declared and shown, so their tile is public.
             for t in m.tiles() {
                 out[OFF_MELD_COUNTS + r * 34 + t as usize] += 1;
             }
         }
-        for (i, &(t, claimed)) in p.discards.iter().enumerate() {
-            out[OFF_DISCARD_COUNTS + r * 34 + t as usize] += 1;
+        for (i, d) in p.discards.iter().enumerate() {
+            out[OFF_DISCARD_COUNTS + r * 34 + d.tile as usize] += 1;
             if i < MAX_DISCARD_SEQ {
-                out[OFF_DISCARD_SEQ + r * MAX_DISCARD_SEQ + i] = t + if claimed { CLAIMED_FLAG } else { 0 };
+                let mut code = d.tile;
+                if d.claimed {
+                    code += CLAIMED_FLAG;
+                }
+                if d.tsumogiri {
+                    code += TSUMOGIRI_FLAG;
+                }
+                out[OFF_DISCARD_SEQ + r * MAX_DISCARD_SEQ + i] = code;
+                out[OFF_DISCARD_TURN + r * MAX_DISCARD_SEQ + i] = d.turn.min(254) as u8;
             }
         }
         for i in p.discards.len().min(MAX_DISCARD_SEQ)..MAX_DISCARD_SEQ {
             out[OFF_DISCARD_SEQ + r * MAX_DISCARD_SEQ + i] = EMPTY;
+            out[OFF_DISCARD_TURN + r * MAX_DISCARD_SEQ + i] = EMPTY;
         }
         for &b in &p.bonus {
             out[OFF_BONUS + r * NUM_BONUS + (b - FIRST_BONUS) as usize] = 1;
         }
-        for (i, m) in p.melds.iter().take(4).enumerate() {
-            out[OFF_MELDS + (r * 4 + i) * 2] = meld_code(m);
-            out[OFF_MELDS + (r * 4 + i) * 2 + 1] = m.tile;
+        for i in 0..4 {
+            let o = OFF_MELDS + (r * 4 + i) * MELD_BYTES;
+            match p.melds.get(i) {
+                Some(m) => {
+                    out[o] = meld_code(m);
+                    out[o + 1] = m.tile;
+                    out[o + 2] = m.from.map_or(EMPTY, |f| rel(seat, f) as u8);
+                }
+                None => {
+                    out[o + 1] = EMPTY;
+                    out[o + 2] = EMPTY;
+                }
+            }
         }
     }
     let mo = OFF_META;
@@ -166,6 +196,32 @@ pub fn encode_obs(g: &Game, seat: u8, out: &mut [u8]) {
     out[mo + 10] = g.last_draw as u8;
     for r in 1..4 {
         out[mo + 10 + r] = g.players[abs_seat(seat, r) as usize].hand_size() as u8;
+    }
+}
+
+// ------------------------------------------------------------------ labels
+
+/// Per-opponent winning tiles: [3][34], value = tai that opponent would score by
+/// winning on that tile if it were discarded now (0 = cannot win on it).
+pub const WAITS_LEN: usize = 3 * 34;
+/// Shanten of every seat, relative order (self first). -1 = complete, 0 = ready.
+pub const SHANTEN_LEN: usize = 4;
+
+/// Exact labels for the opponent-reading heads. Uses hidden information, so it is
+/// a training target and an evaluation tool, never a policy input.
+pub fn encode_labels(g: &Game, seat: u8, waits: &mut [u8], shanten_out: &mut [i8]) {
+    waits[..WAITS_LEN].fill(0);
+    for r in 0..4 {
+        let s = abs_seat(seat, r);
+        let p = &g.players[s as usize];
+        let sh = crate::shanten::shanten(&p.hand, p.melds_needed());
+        shanten_out[r] = sh.clamp(-1, 8) as i8;
+        // A player with 3n+1 tiles at shanten 0 is ready; only then can a discard complete them.
+        if r > 0 && sh == 0 && p.hand_size() % 3 == 1 {
+            for k in 0..34u8 {
+                waits[(r - 1) * 34 + k as usize] = g.ron_tai_if_discarded(s, k);
+            }
+        }
     }
 }
 
@@ -205,7 +261,7 @@ impl<'a> View<'a> {
     pub fn my_bonus(&self) -> &[Tile] {
         &self.g.players[self.seat as usize].bonus
     }
-    pub fn discards_of(&self, seat: u8) -> &[(Tile, bool)] {
+    pub fn discards_of(&self, seat: u8) -> &[Discard] {
         &self.g.players[seat as usize].discards
     }
     pub fn hand_size_of(&self, seat: u8) -> usize {

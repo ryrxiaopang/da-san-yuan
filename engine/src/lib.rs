@@ -5,9 +5,10 @@ pub mod bots;
 pub mod game;
 pub mod obs;
 pub mod rng;
+pub mod scenario;
 pub mod scoring;
 pub mod selfplay;
 pub mod shanten;
 pub mod tile;
 
-pub use game::{Action, Config, Game, HandResult, Phase};
+pub use game::{Action, Config, Discard, Game, HandResult, Phase, Player};

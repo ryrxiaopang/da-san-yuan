@@ -2,9 +2,10 @@
 
 Singapore 4-player mahjong engine, heuristic bots and self-play data generator. It is the foundation for a learning platform that advises players on the best move and explains why.
 
-This repo currently contains **stage 1 of the training pipeline**: a fast, tested rules engine, four heuristic bots, a self-play logger that writes training data, a duplicate-format tournament for comparing bots fairly, an evolution loop, and Python bindings for the RL work.
+This repo currently contains **stage 1 of the training pipeline**: a fast, tested rules engine, four heuristic bots, a self-play logger that writes training data with exact opponent-reading labels, a duplicate-format tournament for comparing bots fairly, an evolution loop, a scenario bank for testing specific skills, and Python bindings for the RL work.
 
-The exact ruleset is in **[RULES.md](RULES.md)**. Please check the "confirm with your table" section there before generating large datasets.
+- **[RULES.md](RULES.md)**: the exact ruleset, confirmed with the team.
+- **[docs/DESIGN.md](docs/DESIGN.md)**: the reinforcement-learning plan, how explanations stay faithful, how to evaluate, and open issues.
 
 ## Layout
 
@@ -14,10 +15,13 @@ engine/         Rust library: rules, scoring, shanten, bots, self-play
   src/game.rs       state machine for one hand (deal, draws, claims, kongs, robbing, draw game)
   src/scoring.rs    win decomposition, tai patterns, payments
   src/shanten.rs    table-based shanten and useful-tile counts
-  src/obs.rs        action space (76) and observation encoding (528 bytes)
+  src/obs.rs        action space (76) and observation encoding (672 bytes)
   src/bots.rs       heuristic bots: fast, high_tai, defensive, balanced
   src/selfplay.rs   data logger, duplicate tournament
-  tests/rules.rs    rule tests (one per scoring rule) + engine invariants
+  src/scenario.rs   scenario format, position builder, exact checks
+  tests/rules.rs    rule tests (one per scoring rule), engine invariants, label checks
+scenarios/      hand-built positions: defence, flush/honour reading, pushing, tai planning, rules
+docs/           design and RL plan
 cli/            `dsy` command-line tool
 python/         PyO3 bindings: `import dasanyuan`
 ```
@@ -45,7 +49,7 @@ Without `cargo install`, run it as `target/release/dsy` (`target\release\dsy.exe
 # Check a hand against the rules (seat 0 = East). Prints every tai pattern and the payment.
 dsy score "123m456p789s123s99m" --win 1s --seat 1
 
-# Generate training data (all cores). 100k hands is about 600 MB compressed.
+# Generate training data (all cores). 100k hands is about 700 MB compressed.
 dsy selfplay --hands 100000 --out data/selfplay
 
 # Fair comparison: every wall is played 4 times with the bots rotated through all seats.
@@ -54,6 +58,9 @@ dsy tournament --styles fast,high_tai,defensive,balanced --walls 5000
 # Evolution: champion vs 3 mutated copies of itself; a challenger is promoted only if it
 # beats the champion by more than 2 standard errors.
 dsy evolve --generations 30 --walls 3000 --start balanced --log data/evolve.csv
+
+# Score bots on the scenario bank (pass rate per scenario and per skill tag).
+dsy scenarios --verbose
 
 dsy bench                       # throughput on this machine
 ```
@@ -68,7 +75,7 @@ import dasanyuan as dsy
 env = dsy.Env(seed=1)
 while not env.is_over():
     seat = env.to_act()
-    obs, mask = env.observe(seat)            # uint8 [528], uint8 [76]
+    obs, mask = env.observe(seat)            # uint8 [672], uint8 [76]
     action = env.bot_action(seat, "balanced")  # or your policy's choice
     env.step(seat, action)
 print(env.result())   # winner, tai, patterns, point changes
@@ -76,44 +83,70 @@ print(env.result())   # winner, tai, patterns, point changes
 data = dsy.load_shards("data/selfplay")      # obs, mask, action, oracle, meta
 ```
 
-`python examples/inspect_data.py data/selfplay` prints the action mix, results per bot, and tai distribution.
+`python examples/inspect_data.py data/selfplay` prints the action mix, results per bot, tai distribution, and how often each bot threw a tile that could deal in compared with a random choice.
+
+```python
+w, sh = env.labels(seat)     # exact: [3, 34] tai each opponent wins with per tile, [4] shanten
+bank = dsy.Scenarios("../scenarios")
+env = bank.env(0); seat = env.to_act()
+ok, msg = bank.check(0, my_policy(*env.observe(seat)))
+```
 
 ## Data format
 
-Each `shard_XXXXX/` directory holds gzip-compressed numpy arrays (`--no-compress` for plain `.npy`):
+Each `shard_XXXXX/` directory holds gzip-compressed numpy arrays (`--no-compress` for plain `.npy`), about 7 KB per hand:
 
 | File | Shape | Meaning |
 |---|---|---|
-| `obs` | [N, 528] u8 | What the acting player can see. Layout documented in `engine/src/obs.rs` |
+| `obs` | [N, 672] u8 | What the acting player can see. Layout documented in `engine/src/obs.rs` |
 | `mask` | [N, 76] u8 | Legal actions |
 | `action` | [N] u8 | Action taken |
 | `oracle` | [N, 102] u8 | The other three players' hidden hands. **Training target only**, never a policy input |
+| `waits` | [N, 3, 34] u8 | For each opponent and tile: tai they would win with if you discarded it now (0 = cannot deal in). Exact, from the engine |
+| `shanten` | [N, 4] i8 | Tiles from ready for every seat, you first (0 = ready, -1 = complete) |
 | `meta` | [N, 6] i32 | hand_id, seat, bot_id, final points for this seat, won, dealt in |
 | `hands.csv` | per hand | seed, dealer, bots, winner, tai, patterns, point changes |
 
 Seats in `obs` and `oracle` are relative: 0 = you, 1 = next player, 2 = opposite, 3 = previous. Actions: 0–33 discard, 34–67 kong, 68 tsumo, 69 ron, 70 pong, 71 exposed kong, 72–74 chow (claimed tile low/middle/high), 75 pass.
 
-`oracle` is there so you can train the opponent-reading head ("what is the left player waiting on?") and try oracle guiding later.
+`oracle`, `waits` and `shanten` are the targets for the opponent-reading heads ("is the left player ready, and on what?"). `format.txt` in each dataset records `obs_version` (currently 2); bump it whenever the layout changes.
+
+## Scenario bank
+
+`scenarios/*.txt` holds hand-built positions with checkable expectations. The format is documented at the top of `engine/src/scenario.rs`. Expectations include `safe` (the discard must not deal in, checked against the real hidden hands), `max_ukeire`, `win`, `pass`, `any_of`, `none_of` and rule checks. `trap: yes` makes the validator confirm that the most efficient discard deals in, so a bot can't pass a defence scenario by playing normally.
+
+Current baselines (pass rate over 20 runs):
+
+| Skill | random | efficiency only | fast | high_tai | defensive | balanced |
+|---|---|---|---|---|---|---|
+| defence | 89% | 20% | 60% | 80% | 80% | 80% |
+| push (don't over-fold) | 10% | 100% | 93% | 100% | 100% | 100% |
+| tai planning | 65% | 67% | 67% | 100% | 67% | 67% |
+| rules | 100% | 100% | 100% | 100% | 100% | 100% |
+
+Read defence and push together: random discards look safe because only one tile is dangerous, but random play fails everything else. Add scenarios freely; `cargo test` validates them all.
 
 ## How this fits the training plan
 
 1. **Heuristic archetypes** (this repo): four styles that only use visible information.
 2. **Evolution** (`dsy evolve`): tune style weights by duplicate-format tournaments.
-3. **Behaviour cloning**: train a network on `obs` → `action` from the best bots' games, plus an opponent-hand head on `oracle`.
-4. **PPO self-play league** using `dasanyuan.Env`: start from the cloned network; play against past versions and the heuristic bots; reward = points.
-5. **Explanations**: value estimates per legal action + opponent-wait predictions + exact tile odds.
+3. **Behaviour cloning**: train a network on `obs` → `action` from the best bots' games, plus opponent-reading heads on `waits` / `shanten` / `oracle`.
+4. **PPO self-play league** (the reinforcement learning) using `dasanyuan.Env`: start from the cloned network; play against past versions and the heuristic bots; reward = points.
+5. **Explanations**: afterstate values per discard + opponent-reading predictions + exact tile odds.
+
+Details in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Performance
 
-About 950 hands/s on 2 cloud CPU threads with heuristic bots. Scaling is roughly linear with cores, so a 16-thread desktop should do several thousand hands per second. Run `dsy bench` to measure. In the duplicate format, 5,000 walls give a standard error of about 0.08 points per hand.
+About 850 hands/s on 2 cloud CPU threads with heuristic bots and full label logging. The Python environment alone runs about 178,000 decisions/s on one thread. Scaling is roughly linear with cores, so a 16-thread desktop should do several thousand hands per second. Run `dsy bench` to measure. In the duplicate format, 5,000 walls give a standard error of about 0.08 points per hand.
 
 ## Sample results (12,000 duplicate hands)
 
-| Style | Points/hand | Win % | Deal-in % |
+| Style | Points/hand (± se) | Win % | Deal-in % |
 |---|---|---|---|
-| high_tai | +1.58 | 32.7 | 15.7 |
-| balanced | −0.28 | 20.8 | 15.8 |
-| fast | −0.56 | 21.1 | 18.7 |
-| defensive | −0.73 | 16.3 | 13.3 |
+| high_tai | +1.72 ± 0.13 | 32.6 | 15.7 |
+| balanced | −0.38 ± 0.12 | 20.6 | 15.8 |
+| fast | −0.54 ± 0.12 | 21.1 | 18.6 |
+| defensive | −0.80 ± 0.11 | 16.2 | 13.1 |
 
-These are hand-tuned starting points, not strong play. Beating them is the first milestone for the learned models.
+These are hand-tuned starting points, not strong play. Beating them, and then beating the behaviour-cloned model, is how the RL stage proves itself.

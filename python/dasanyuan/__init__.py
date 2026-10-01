@@ -87,6 +87,16 @@ class Env:
         """Hidden hands of the other three seats [3, 34]. Training targets only."""
         return np.frombuffer(self._e.oracle_bytes(seat), dtype=np.uint8).reshape(3, 34)
 
+    def labels(self, seat: int):
+        """Exact training targets (uses hidden information, never a policy input).
+
+        waits [3, 34]: tai each opponent (relative seats 1..3) would win with if that
+        tile were discarded now; 0 means the tile cannot deal in to them.
+        shanten [4]: tiles-from-ready of every seat, self first (0 = ready).
+        """
+        w, sh = self._e.labels_bytes(seat)
+        return np.frombuffer(w, dtype=np.uint8).reshape(3, 34), np.frombuffer(sh, dtype=np.int8)
+
     def step(self, seat: int, action: int) -> None:
         self._e.step(seat, int(action))
 
@@ -106,6 +116,36 @@ class Env:
         return self._e.draws_left()
 
 
+class Scenarios:
+    """Scenario bank for evaluating any policy.
+
+        bank = dsy.Scenarios("scenarios")
+        for i in range(len(bank)):
+            env = bank.env(i)
+            seat = env.to_act()
+            obs, mask = env.observe(seat)
+            ok, msg = bank.check(i, my_policy(obs, mask))
+    """
+
+    def __init__(self, directory: str = "scenarios"):
+        self._b = _core.ScenarioBank(directory)
+
+    def __len__(self) -> int:
+        return len(self._b)
+
+    def info(self, i: int) -> dict:
+        f, name, desc, tags, hero = self._b.info(i)
+        return {"file": f, "name": name, "desc": desc, "tags": tags, "hero": hero}
+
+    def env(self, i: int) -> "Env":
+        e = Env.__new__(Env)
+        e._e = self._b.env(i)
+        return e
+
+    def check(self, i: int, action: int):
+        return self._b.check(i, int(action))
+
+
 def load_npy(path_without_ext: str, mmap: bool = True) -> np.ndarray:
     """Load `<path>.npy`, or `<path>.npy.gz` if only the compressed file exists."""
     if os.path.exists(path_without_ext + ".npy"):
@@ -117,7 +157,9 @@ def load_npy(path_without_ext: str, mmap: bool = True) -> np.ndarray:
 def load_shards(root: str, limit: int | None = None, mmap: bool = True) -> Dict[str, np.ndarray]:
     """Concatenate self-play shards under `root` into one dict of arrays.
 
-    Keys: obs [N, OBS_LEN], mask [N, 76], action [N], oracle [N, 102], meta [N, 6].
+    Keys: obs [N, OBS_LEN], mask [N, 76], action [N], oracle [N, 102],
+    waits [N, 3, 34] (tai each opponent would win with on that tile, 0 = safe),
+    shanten [N, 4] (self first; 0 = ready), meta [N, 6].
     Handles both plain .npy and compressed .npy.gz shards. Plain shards are
     memory-mapped when mmap=True. For datasets larger than RAM, iterate over
     shards with `limit` or load shard directories one at a time.
@@ -127,7 +169,7 @@ def load_shards(root: str, limit: int | None = None, mmap: bool = True) -> Dict[
         shards = shards[:limit]
     if not shards:
         raise FileNotFoundError(f"no shard_* directories in {root}")
-    out: Dict[str, List[np.ndarray]] = {k: [] for k in ("obs", "mask", "action", "oracle", "meta")}
+    out: Dict[str, List[np.ndarray]] = {k: [] for k in ("obs", "mask", "action", "oracle", "waits", "shanten", "meta")}
     for s in shards:
         for k in out:
             out[k].append(load_npy(os.path.join(s, k), mmap))
@@ -135,6 +177,6 @@ def load_shards(root: str, limit: int | None = None, mmap: bool = True) -> Dict[
 
 
 __all__ = [
-    "Env", "load_shards", "load_npy", "run_selfplay", "tournament", "tile_name", "action_name",
+    "Env", "Scenarios", "load_shards", "load_npy", "run_selfplay", "tournament", "tile_name", "action_name",
     "OBS_LEN", "N_ACTIONS", "ORACLE_LEN", "META_COLUMNS",
 ]
