@@ -1,0 +1,11 @@
+/target
+/data
+*.npy
+*.npy.gz
+__pycache__/
+*.so
+*.pyd
+.venv/
+python/dasanyuan/_core*
+*.egg-info/
+.pytest_cache/

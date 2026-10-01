@@ -1,0 +1,13 @@
+[package]
+name = "dsy-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "dsy"
+path = "src/main.rs"
+
+[dependencies]
+dsy-engine = { path = "../engine" }
+clap = { version = "4", features = ["derive"] }
+rayon = "1.10"
