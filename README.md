@@ -21,6 +21,8 @@ engine/         Rust library: rules, scoring, shanten, bots, self-play
   src/scenario.rs   scenario format, position builder, exact checks
   tests/rules.rs    rule tests (one per scoring rule), engine invariants, label checks
 scenarios/      hand-built positions: defence, flush/honour reading, pushing, tai planning, rules
+db/             PostgreSQL schema, loader and docker-compose for analysis
+notebooks/      EDA notebook and exported figures
 docs/           design and RL plan
 cli/            `dsy` command-line tool
 python/         PyO3 bindings: `import dasanyuan`
@@ -110,6 +112,32 @@ Each `shard_XXXXX/` directory holds gzip-compressed numpy arrays (`--no-compress
 Seats in `obs` and `oracle` are relative: 0 = you, 1 = next player, 2 = opposite, 3 = previous. Actions: 0–33 discard, 34–67 kong, 68 tsumo, 69 ron, 70 pong, 71 exposed kong, 72–74 chow (claimed tile low/middle/high), 75 pass.
 
 `oracle`, `waits` and `shanten` are the targets for the opponent-reading heads ("is the left player ready, and on what?"). `format.txt` in each dataset records `obs_version` (currently 2); bump it whenever the layout changes.
+
+## Analysis database (PostgreSQL)
+
+Training reads the `.npy` shards directly. For analysis and reporting, hand-level and decision-level summaries go into PostgreSQL:
+
+| Table / view | One row per | Contents |
+|---|---|---|
+| `runs` | data-generation run | seed, bots and their weights, observation version, engine commit, shard path |
+| `hands` | hand | deal seed (replays the hand exactly), dealer, wind, winner, discarder, tai, turns |
+| `hand_seats` | player per hand | bot style, seat wind, points, won, dealt in |
+| `hand_patterns` | tai pattern per win | pattern name, tai |
+| `decisions` | decision | phase, action, tile, legal options, wall count, own shanten, opponents ready, safe / unsafe options, tai the chosen discard gives away |
+| `v_style_summary`, `v_pattern_frequency`, `v_defence` | | ready-made summaries |
+
+```bash
+docker compose -f db/docker-compose.yml up -d        # or any PostgreSQL 13+; set DATABASE_URL
+pip install numpy pandas "psycopg[binary]" matplotlib jupyter
+
+dsy selfplay --hands 20000 --out data/run20k
+python db/load_selfplay.py data/run20k               # --replace to reload, --no-decisions for hands only
+psql postgresql://dsy:dsy@localhost:5432/dasanyuan -c "select * from v_style_summary"
+```
+
+Size guide: 20,000 hands is about 1.2 million decision rows and roughly 300 MB in PostgreSQL. Free hosted tiers (about 0.5 GB) fit hand-level tables comfortably; use `--no-decisions` there.
+
+`notebooks/01_selfplay_eda.ipynb` turns a loaded run into the baseline charts and key findings (set `DSY_RUN` to pick a run). Exported figures are in `notebooks/figures/`.
 
 ## Scenario bank
 

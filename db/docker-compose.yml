@@ -1,0 +1,15 @@
+# Local PostgreSQL for analysis:  docker compose -f db/docker-compose.yml up -d
+# Connection string: postgresql://dsy:dsy@localhost:5432/dasanyuan
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: dsy
+      POSTGRES_PASSWORD: dsy
+      POSTGRES_DB: dasanyuan
+    ports:
+      - "5432:5432"
+    volumes:
+      - dsy-pgdata:/var/lib/postgresql/data
+volumes:
+  dsy-pgdata:
