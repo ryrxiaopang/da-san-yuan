@@ -37,7 +37,7 @@ The opponent heads are trained with supervised losses against the exact labels t
 
 ## 3. Training stages
 
-1. **Generate data** (`dsy selfplay`). Mix of the four styles plus evolved champions. 1–2 million hands; about 6 KB per hand compressed.
+1. **Generate data** (`dsy selfplay`). Line-ups are random per hand by default, so styles play roughly but not exactly equal numbers of hands (within about 1% at 20,000 hands); the variety is intentional, comparisons use per-hand averages, and fair comparisons use the duplicate tournament. Mix of the four styles plus evolved champions. 1–2 million hands; about 6 KB per hand compressed.
 2. **Supervised pre-training.** BC loss on actions plus opponent-head losses. Claims are only ~4% of decisions, so weight the claim decisions (or give them their own head), or the model learns to always pass.
 3. **PPO self-play league** (`dasanyuan.Env`):
    - The learner plays some seats; the others are drawn from a pool of past checkpoints and the heuristic bots. Pure self-play against identical copies tends to collapse into habits that only work against itself.

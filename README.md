@@ -111,6 +111,8 @@ Each `shard_XXXXX/` directory holds gzip-compressed numpy arrays (`--no-compress
 
 Seats in `obs` and `oracle` are relative: 0 = you, 1 = next player, 2 = opposite, 3 = previous. Actions: 0–33 discard, 34–67 kong, 68 tsumo, 69 ron, 70 pong, 71 exposed kong, 72–74 chow (claimed tile low/middle/high), 75 pass.
 
+**Line-ups and why styles play different numbers of hands.** By default each seat's style is drawn at random every hand (`random_lineup=true` in `format.txt`). Over 20,000 hands (80,000 seats) the styles therefore get roughly, not exactly, 20,000 seats each; in `run20k` the counts were 19,838 to 20,109, within about 1%, which is ordinary random variation. This is deliberate: varied line-ups (for example three aggressive players against one cautious one) teach the model to handle any mix of opponents. When comparing styles from this data, use average points per hand, never totals, since the average adjusts for the count. For a fair head-to-head comparison use `dsy tournament`, which gives every style the same deals from every seat; for a dataset with exactly equal counts, generate with `--fixed-lineup`.
+
 `oracle`, `waits` and `shanten` are the targets for the opponent-reading heads ("is the left player ready, and on what?"). `format.txt` in each dataset records `obs_version` (currently 2); bump it whenever the layout changes.
 
 ## Analysis database (PostgreSQL)
