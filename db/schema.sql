@@ -122,3 +122,54 @@ SELECT run_id,
 FROM decisions
 WHERE action_type = 'discard' AND unsafe_options > 0
 GROUP BY run_id, bot;
+
+-- One easy-to-read row per hand: players named by seat wind and play style,
+-- e.g. "South (Balanced)". Seat winds move every hand (the dealer is East).
+-- Same layout as tools/readable_hands.py. Filter with WHERE run_id = ...
+CREATE OR REPLACE VIEW v_hands_readable AS
+WITH seats AS (
+    SELECT run_id, hand_id, seat, seat_wind, points,
+           (ARRAY['East','South','West','North'])[seat_wind + 1] AS wind_name,
+           CASE bot WHEN 'fast' THEN 'Fast' WHEN 'high_tai' THEN 'High-tai'
+                    WHEN 'defensive' THEN 'Defensive' WHEN 'balanced' THEN 'Balanced'
+                    ELSE bot END AS style
+    FROM hand_seats
+),
+pats AS (
+    SELECT run_id, hand_id,
+           string_agg(CASE WHEN n = 1 THEN pattern || ' +' || t
+                           ELSE pattern || ' x' || n || ' +' || t END,
+                      ', ' ORDER BY t DESC, pattern) AS how
+    FROM (SELECT run_id, hand_id, pattern, count(*) AS n, sum(tai) AS t
+          FROM hand_patterns GROUP BY run_id, hand_id, pattern) x
+    GROUP BY run_id, hand_id
+)
+SELECT h.run_id,
+       h.hand_id + 1                                                     AS "Hand",
+       (ARRAY['East','South','West','North'])[h.prevailing + 1]          AS "Round wind",
+       max(s.style) FILTER (WHERE s.seat_wind = 0)                       AS "East player (dealer)",
+       max(s.style) FILTER (WHERE s.seat_wind = 1)                       AS "South player",
+       max(s.style) FILTER (WHERE s.seat_wind = 2)                       AS "West player",
+       max(s.style) FILTER (WHERE s.seat_wind = 3)                       AS "North player",
+       CASE WHEN h.winner IS NULL THEN 'Draw (no winner)'
+            WHEN h.self_draw THEN 'Self-drawn win'
+            ELSE 'Won on a discard' END                                  AS "Result",
+       coalesce(max(s.wind_name || ' (' || s.style || ')')
+                FILTER (WHERE s.seat = h.winner), '-')                   AS "Winner",
+       CASE WHEN h.winner IS NULL THEN '-'
+            WHEN h.self_draw THEN 'Nobody (self-drawn)'
+            ELSE max(s.wind_name || ' (' || s.style || ')')
+                 FILTER (WHERE s.seat = h.discarder) END                 AS "Threw the winning tile",
+       h.tai                                                             AS "Tai",
+       h.raw_tai                                                         AS "Tai before 5-tai cap",
+       coalesce(p.how, '')                                               AS "Where the tai came from",
+       max(s.points) FILTER (WHERE s.seat_wind = 0)                      AS "East points",
+       max(s.points) FILTER (WHERE s.seat_wind = 1)                      AS "South points",
+       max(s.points) FILTER (WHERE s.seat_wind = 2)                      AS "West points",
+       max(s.points) FILTER (WHERE s.seat_wind = 3)                      AS "North points",
+       h.turns                                                           AS "Turns"
+FROM hands h
+JOIN seats s USING (run_id, hand_id)
+LEFT JOIN pats p USING (run_id, hand_id)
+GROUP BY h.run_id, h.hand_id, h.prevailing, h.winner, h.discarder, h.self_draw,
+         h.tai, h.raw_tai, h.turns, p.how;

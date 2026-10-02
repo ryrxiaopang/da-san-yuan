@@ -139,6 +139,31 @@ Size guide: 20,000 hands is about 1.2 million decision rows and roughly 300 MB i
 
 `notebooks/01_selfplay_eda.ipynb` turns a loaded run into the baseline charts and key findings (set `DSY_RUN` to pick a run). Exported figures are in `notebooks/figures/`.
 
+## Easy-to-read hand table
+
+For browsing results in Excel or pgAdmin, there is a plain-language version of the hands:
+
+```bash
+python tools/readable_hands.py data/run20k     # writes data/run20k/hands_readable.csv
+```
+
+In PostgreSQL the same table is the view `v_hands_readable` (`SELECT * FROM v_hands_readable WHERE run_id = 1 LIMIT 20;`).
+
+| Column | Meaning |
+|---|---|
+| Hand | Hand number, starting at 1 |
+| Round wind | The prevailing wind of the round: East, South, West, then North (changes every 4 hands) |
+| East player (dealer) … North player | The play style sitting at each wind: Fast, High-tai, Defensive or Balanced. The dealer always sits East, and seats move every hand |
+| Result | Won on a discard, Self-drawn win, or Draw (no winner) |
+| Winner | Who won, as wind and style, e.g. "South (Balanced)". The style alone is not enough because two players can share a style |
+| Threw the winning tile | Who discarded the tile the winner took, and so pays for everyone. "Nobody (self-drawn)" when the winner drew it themselves |
+| Tai / Tai before 5-tai cap | Hand value as paid, and before the 5-tai limit |
+| Where the tai came from | Each scoring pattern and its tai, e.g. "Men qing (fully concealed) +1, Animal x2 +2" |
+| East points … North points | Points each player gained (+) or paid (−) this hand; they always add up to 0 |
+| Turns | How many turns the hand lasted |
+
+The original `shard_*/hands.csv` files stay as they are: the loader and training read them, and they keep the exact seed for replaying each hand. Don't save `hands.csv` from Excel, which rounds the seeds.
+
 ## Scenario bank
 
 `scenarios/*.txt` holds hand-built positions with checkable expectations. The format is documented at the top of `engine/src/scenario.rs`. Expectations include `safe` (the discard must not deal in, checked against the real hidden hands), `max_ukeire`, `win`, `pass`, `any_of`, `none_of` and rule checks. `trap: yes` makes the validator confirm that the most efficient discard deals in, so a bot can't pass a defence scenario by playing normally.
