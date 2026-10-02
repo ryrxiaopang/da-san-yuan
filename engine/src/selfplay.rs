@@ -396,3 +396,31 @@ pub fn verify_hand_invariants(g: &Game) -> Result<(), String> {
     }
     Ok(())
 }
+
+// ------------------------------------------------------------------ replay
+
+/// Style ids seated at each seat for `hand_id` of a self-play run, exactly as
+/// `run_selfplay` drew them (same shard RNG stream), so any hand in a dataset
+/// can be replayed move for move.
+pub fn lineup_for(cfg: &SelfPlayConfig, hand_id: u64) -> [usize; 4] {
+    if !cfg.random_lineup {
+        return std::array::from_fn(|i| i % cfg.styles.len());
+    }
+    let shard = hand_id / cfg.shard_size;
+    let mut rng = Rng::derive(cfg.seed ^ 0x5EED, shard);
+    let skip = (hand_id - shard * cfg.shard_size) * 4;
+    for _ in 0..skip {
+        rng.below(cfg.styles.len() as u64);
+    }
+    std::array::from_fn(|_| rng.below(cfg.styles.len() as u64) as usize)
+}
+
+/// The four bots for a dataset hand, seeded exactly as in `run_selfplay`.
+pub fn bots_for(cfg: &SelfPlayConfig, hand_id: u64) -> ([usize; 4], [Box<dyn Bot>; 4]) {
+    let ids = lineup_for(cfg, hand_id);
+    let seed = hand_seed(cfg.seed, hand_id);
+    let bots = std::array::from_fn(|i| {
+        Box::new(HeuristicBot::new(cfg.styles[ids[i]].clone(), seed ^ (i as u64 + 1) * 0x9E37)) as Box<dyn Bot>
+    });
+    (ids, bots)
+}

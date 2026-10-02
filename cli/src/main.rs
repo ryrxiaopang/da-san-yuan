@@ -11,6 +11,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
+mod trace;
+
 #[derive(Parser)]
 #[command(name = "dsy", about = "da-san-yuan: Singapore mahjong engine tools")]
 struct Cli {
@@ -100,6 +102,25 @@ enum Cmd {
         /// Runs per bot with different bot seeds (random/noisy bots vary).
         #[arg(long, default_value_t = 20)]
         trials: u64,
+    },
+    /// Export complete hands from a self-play run as JSON for the replay viewer:
+    /// every decision with the table state, legal moves, the move taken and the
+    /// exact row recorded for training. Hands are reproduced move for move.
+    Trace {
+        /// Hand ids to export (0-based, as in hands.csv), comma-separated.
+        #[arg(long, default_value = "0")]
+        hands: String,
+        /// Seed and shard size of the run to reproduce (defaults match `dsy selfplay`).
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long, default_value_t = 2_000)]
+        shard_size: u64,
+        #[arg(long, default_value = "fast,high_tai,defensive,balanced")]
+        styles: String,
+        #[arg(long)]
+        fixed_lineup: bool,
+        #[arg(long, default_value = "replay.json")]
+        out: PathBuf,
     },
     /// Measure engine + bot throughput.
     Bench {
@@ -324,6 +345,28 @@ fn main() {
             for (tag, v) in by_tag {
                 println!("{:<30}{}", format!("  [{}]", tag), v.iter().map(|(a, b)| format!("{:>10.0}%", 100.0 * a / *b as f64)).collect::<String>());
             }
+        }
+        Cmd::Trace { hands, seed, shard_size, styles, fixed_lineup, out } => {
+            let cfg = SelfPlayConfig {
+                hands: 0,
+                seed,
+                styles: parse_styles(&styles),
+                random_lineup: !fixed_lineup,
+                shard_size,
+                out_dir: PathBuf::new(),
+                compress: false,
+            };
+            let ids: Vec<u64> = hands.split(',').map(|h| h.trim().parse().expect("hand ids are numbers")).collect();
+            let games: Vec<serde_json::Value> = ids.iter().map(|&h| trace::trace_hand(&cfg, h)).collect();
+            let doc = serde_json::json!({
+                "format": 1,
+                "obs_version": dsy_engine::obs::OBS_VERSION,
+                "obs_len": dsy_engine::obs::OBS_LEN,
+                "run": {"seed": seed, "shard_size": shard_size, "random_lineup": !fixed_lineup},
+                "games": games,
+            });
+            std::fs::write(&out, serde_json::to_string(&doc).unwrap()).expect("write trace");
+            println!("wrote {} hand(s) to {}", ids.len(), out.display());
         }
         Cmd::Bench { hands } => {
             let t = Instant::now();

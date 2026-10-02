@@ -166,6 +166,17 @@ In PostgreSQL the same table is the view `v_hands_readable` (`SELECT * FROM v_ha
 
 The original `shard_*/hands.csv` files stay as they are: the loader and training read them, and they keep the exact seed for replaying each hand. Don't save `hands.csv` from Excel, which rounds the seeds.
 
+## Replay viewer
+
+`web/replay/index.html` replays real hands from the dataset move by move and shows, for every decision, the training row being recorded: the 672-number snapshot, the allowed moves and the one chosen, the hidden answers used to train the opponent reader, and the points added as the reward when the hand ends. Open it in any browser.
+
+The hands are reproduced exactly (same line-up, same bot seeds), so each one matches its rows in `hands.csv` and the database. To show other hands:
+
+```bash
+dsy trace --hands 380,241,27,19 --out web/replay/replay.json   # 0-based hand ids from the run
+python web/replay/build.py
+```
+
 ## Scenario bank
 
 `scenarios/*.txt` holds hand-built positions with checkable expectations. The format is documented at the top of `engine/src/scenario.rs`. Expectations include `safe` (the discard must not deal in, checked against the real hidden hands), `max_ukeire`, `win`, `pass`, `any_of`, `none_of` and rule checks. `trap: yes` makes the validator confirm that the most efficient discard deals in, so a bot can't pass a defence scenario by playing normally.
