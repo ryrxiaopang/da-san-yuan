@@ -110,20 +110,13 @@ header { display: grid; gap: 8px; margin-bottom: 16px; }
 }
 
 /* ---------- tiles ---------- */
-.t { --w: 30px; display: inline-grid; place-items: center; width: var(--w); height: calc(var(--w) * 1.36); background: var(--tile); border: 1px solid var(--tile-edge);
+.t { --w: 32px; display: inline-block; padding: calc(var(--w) * 0.05); width: var(--w); height: calc(var(--w) * 1.36); background: var(--tile); border: 1px solid var(--tile-edge);
   border-radius: calc(var(--w) * 0.14); box-shadow: 0 2px 0 var(--tile-edge), 0 3px 6px var(--tile-shadow); font-family: var(--font-tile); font-weight: 700; color: var(--tile-ink);
   line-height: 1; position: relative; flex: none; }
-.t.sm { --w: 21px; }
-.t.xs { --w: 17px; box-shadow: 0 1px 0 var(--tile-edge); }
-.t.lg { --w: 46px; }
-.t .n { font-size: calc(var(--w) * 0.42); }
-.t .s { font-size: calc(var(--w) * 0.42); }
-.t.two { grid-template-rows: 1fr 1fr; padding-block: calc(var(--w) * 0.1); }
-.t.one { font-size: calc(var(--w) * 0.68); }
-.t.one.long { font-size: calc(var(--w) * 0.4); writing-mode: vertical-rl; letter-spacing: -0.05em; }
-.t .k { position: absolute; top: 1px; right: 2px; font-family: var(--font-data); font-size: calc(var(--w) * 0.24); font-weight: 500; color: var(--tile-ink); }
-.t.red, .t .red { color: var(--tile-red); } .t.green, .t .green { color: var(--tile-green); } .t.blue, .t .blue { color: var(--tile-blue); }
-.t.white::after { content: ""; position: absolute; inset: 22% 20%; border: 2px solid var(--tile-blue); border-radius: 2px; }
+.t.sm { --w: 23px; }
+.t.xs { --w: 19px; box-shadow: 0 1px 0 var(--tile-edge); }
+.t.lg { --w: 50px; }
+.t svg { width: 100%; height: 100%; display: block; }
 .t.back { background: var(--tile-back); border-color: color-mix(in srgb, var(--tile-back) 70%, #000); box-shadow: 0 2px 0 color-mix(in srgb, var(--tile-back) 60%, #000); }
 .t.dim { opacity: 0.38; }
 .t.pick { outline: 3px solid var(--gold); outline-offset: 1px; transform: translateY(-4px); }
@@ -232,22 +225,142 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
     if (id < 34) return EN_HONOR[id - 27];
     return EN_BONUS[id - 34];
   }
+  // ---------- tile art (original drawings in the Singapore style; viewBox 60 x 80) ----------
+  const C = { blue: '#1f4e9a', green: '#1c7a45', red: '#c4362a', ink: '#1d2a44', brown: '#7a4a24', gold: '#e2a21f', pink: '#d8466f', purple: '#7d3fa0', grey: '#8a8d94', orange: '#de7c2c' };
+  const FONT = `font-family="Noto Serif TC, PMingLiU, Songti TC, Source Han Serif TC, serif" font-weight="700"`;
+  const txt = (x, y, s, size, fill, anchor = 'middle') => `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" text-anchor="${anchor}" ${FONT}>${s}</text>`;
+
+  function dot(x, y, r, col) {
+    return `<circle cx="${x}" cy="${y}" r="${r}" fill="${col}"/><circle cx="${x}" cy="${y}" r="${r * 0.74}" fill="#fff"/>` +
+      `<circle cx="${x}" cy="${y}" r="${r * 0.56}" fill="${col}"/><circle cx="${x}" cy="${y}" r="${r * 0.2}" fill="#fff"/>`;
+  }
+  function bigDot() {
+    let s = `<circle cx="30" cy="40" r="23" fill="${C.green}"/><circle cx="30" cy="40" r="19.5" fill="#fff"/>`;
+    for (let i = 0; i < 12; i++) {
+      const a = i * Math.PI / 6, x = 30 + Math.cos(a) * 15.5, y = 40 + Math.sin(a) * 15.5;
+      s += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="2.6" fill="${i % 2 ? C.blue : C.red}"/>`;
+    }
+    return s + `<circle cx="30" cy="40" r="11" fill="${C.red}"/><circle cx="30" cy="40" r="8" fill="#fff"/><circle cx="30" cy="40" r="5.5" fill="${C.blue}"/><circle cx="30" cy="40" r="2" fill="#fff"/>`;
+  }
+  const DOTS = [
+    null,
+    [[30, 22, 'g'], [30, 58, 'b']],
+    [[15, 17, 'b'], [30, 40, 'r'], [45, 63, 'g']],
+    [[17, 21, 'b'], [43, 21, 'g'], [17, 59, 'g'], [43, 59, 'b']],
+    [[16, 18, 'b'], [44, 18, 'g'], [30, 40, 'r'], [16, 62, 'g'], [44, 62, 'b']],
+    [[18, 15, 'g'], [42, 15, 'g'], [18, 43, 'r'], [42, 43, 'r'], [18, 66, 'r'], [42, 66, 'r']],
+    [[13, 11, 'g'], [30, 19, 'g'], [47, 27, 'g'], [19, 48, 'r'], [41, 48, 'r'], [19, 67, 'r'], [41, 67, 'r']],
+    [[19, 12, 'b'], [41, 12, 'b'], [19, 31, 'b'], [41, 31, 'b'], [19, 50, 'b'], [41, 50, 'b'], [19, 69, 'b'], [41, 69, 'b']],
+    [[13, 16, 'b'], [30, 16, 'b'], [47, 16, 'b'], [13, 40, 'r'], [30, 40, 'r'], [47, 40, 'r'], [13, 64, 'g'], [30, 64, 'g'], [47, 64, 'g']],
+  ];
+  const DOT_R = [0, 11, 9.5, 10, 9, 8.5, 7, 7.5, 7.5];
+  const COLS = { b: C.blue, g: C.green, r: C.red };
+
+  function stick(x, y, h, col, angle = 0) {
+    const w = 7;
+    return `<g transform="translate(${x} ${y}) rotate(${angle})"><rect x="${-w / 2}" y="${-h / 2}" width="${w}" height="${h}" rx="3" fill="${col}"/>` +
+      `<rect x="-1" y="${-h / 2 + 2}" width="2" height="${h - 4}" fill="#fff" opacity="0.55"/>` +
+      `<rect x="${-w / 2 - 0.6}" y="-1.2" width="${w + 1.2}" height="2.4" rx="1" fill="${col}"/><rect x="${-w / 2}" y="-0.5" width="${w}" height="1" fill="#fff" opacity="0.7"/></g>`;
+  }
+  const BAMBOO = [
+    null,
+    [[30, 22, 26, 'g'], [30, 58, 26, 'b']],
+    [[30, 22, 26, 'b'], [19, 58, 26, 'g'], [41, 58, 26, 'g']],
+    [[19, 22, 26, 'b'], [41, 22, 26, 'g'], [19, 58, 26, 'g'], [41, 58, 26, 'b']],
+    [[14, 22, 26, 'g'], [46, 22, 26, 'b'], [30, 40, 26, 'r'], [14, 58, 26, 'b'], [46, 58, 26, 'g']],
+    [[14, 22, 26, 'g'], [30, 22, 26, 'g'], [46, 22, 26, 'g'], [14, 58, 26, 'b'], [30, 58, 26, 'b'], [46, 58, 26, 'b']],
+    [[30, 14, 18, 'r'], [14, 40, 20, 'g'], [30, 40, 20, 'b'], [46, 40, 20, 'g'], [14, 65, 20, 'g'], [30, 65, 20, 'b'], [46, 65, 20, 'g']],
+    [[12, 22, 26, 'g', 18], [23, 22, 26, 'g', -18], [37, 22, 26, 'g', 18], [48, 22, 26, 'g', -18],
+     [12, 58, 26, 'b', -18], [23, 58, 26, 'b', 18], [37, 58, 26, 'b', -18], [48, 58, 26, 'b', 18]],
+    [[14, 14, 20, 'g'], [30, 14, 20, 'r'], [46, 14, 20, 'b'], [14, 40, 20, 'g'], [30, 40, 20, 'r'], [46, 40, 20, 'b'], [14, 66, 20, 'g'], [30, 66, 20, 'r'], [46, 66, 20, 'b']],
+  ];
+  function bird() {
+    return `<path d="M17 44 L5 30 L13 33 L9 24 L19 38 Z" fill="${C.red}"/><path d="M17 47 L4 48 L17 52 Z" fill="${C.blue}"/>` +
+      `<path d="M18 49 L8 61 L21 53 Z" fill="${C.red}"/>` +
+      `<ellipse cx="28" cy="45" rx="13" ry="9.5" fill="${C.green}"/><path d="M22 41 Q30 34 37 44 Q29 47 22 41 Z" fill="#0f5a31"/>` +
+      `<circle cx="40" cy="32" r="7" fill="${C.green}"/><circle cx="42" cy="31" r="2.2" fill="#fff"/><circle cx="42.4" cy="31" r="1.1" fill="#111"/>` +
+      `<path d="M46 30 L54 32.5 L46 35 Z" fill="${C.gold}"/><path d="M24 54 L22 62 M32 54 L33 62" stroke="${C.gold}" stroke-width="2"/>` +
+      `<path d="M10 63 H50" stroke="${C.brown}" stroke-width="3" stroke-linecap="round"/>`;
+  }
+
+  function blossom(x, y, r, col) {
+    let s = '';
+    for (let i = 0; i < 5; i++) { const a = i * 2 * Math.PI / 5 - Math.PI / 2; s += `<circle cx="${(x + Math.cos(a) * r).toFixed(1)}" cy="${(y + Math.sin(a) * r).toFixed(1)}" r="${r * 0.85}" fill="${col}"/>`; }
+    return s + `<circle cx="${x}" cy="${y}" r="${r * 0.55}" fill="${C.gold}"/>`;
+  }
+  const ART = {
+    plum: () => `<path d="M12 68 Q22 52 28 42 Q34 30 46 18 M28 42 Q38 40 46 46" stroke="${C.brown}" stroke-width="3" fill="none" stroke-linecap="round"/>` +
+      blossom(22, 52, 4.2, C.pink) + blossom(38, 28, 4.6, C.pink) + blossom(45, 46, 3.8, C.pink),
+    orchid: () => `<path d="M30 70 Q14 50 10 26 M30 70 Q36 44 50 24 M30 70 Q26 48 34 14" stroke="${C.green}" stroke-width="2.6" fill="none" stroke-linecap="round"/>` +
+      [0, 72, 144, 216, 288].map(a => `<ellipse cx="32" cy="34" rx="3.4" ry="8" fill="${C.purple}" transform="rotate(${a} 32 40)"/>`).join('') + `<circle cx="32" cy="40" r="3" fill="${C.gold}"/>`,
+    chrys: () => `<path d="M30 70 V48 M30 62 Q20 58 16 50 M30 58 Q40 56 44 48" stroke="${C.green}" stroke-width="2.6" fill="none" stroke-linecap="round"/>` +
+      Array.from({ length: 16 }, (_, i) => `<ellipse cx="30" cy="22" rx="2.6" ry="9" fill="${C.gold}" transform="rotate(${i * 22.5} 30 32)"/>`).join('') + `<circle cx="30" cy="32" r="5" fill="${C.orange}"/>`,
+    bamboo: () => `<rect x="26" y="10" width="7" height="60" rx="3" fill="${C.green}"/>` + [24, 40, 56].map(y => `<rect x="25" y="${y}" width="9" height="2.4" rx="1" fill="#0f5a31"/>`).join('') +
+      `<ellipse cx="17" cy="22" rx="10" ry="3" fill="#2e9a5a" transform="rotate(-30 17 22)"/><ellipse cx="43" cy="36" rx="11" ry="3" fill="#2e9a5a" transform="rotate(25 43 36)"/><ellipse cx="16" cy="50" rx="10" ry="3" fill="#2e9a5a" transform="rotate(20 16 50)"/>`,
+    spring: () => `<path d="M30 68 V36" stroke="${C.green}" stroke-width="3" stroke-linecap="round"/><ellipse cx="21" cy="52" rx="9" ry="4" fill="#2e9a5a" transform="rotate(-25 21 52)"/><ellipse cx="39" cy="46" rx="9" ry="4" fill="#2e9a5a" transform="rotate(25 39 46)"/>` + blossom(30, 28, 6, C.pink),
+    summer: () => `<path d="M8 62 Q19 58 30 62 T52 62" stroke="${C.blue}" stroke-width="2.5" fill="none"/>` +
+      [-50, -25, 0, 25, 50].map(a => `<ellipse cx="30" cy="36" rx="5.5" ry="15" fill="${C.pink}" opacity="0.9" transform="rotate(${a} 30 54)"/>`).join('') + `<circle cx="30" cy="52" r="4" fill="${C.gold}"/>`,
+    autumn: () => `<path d="M30 66 V54" stroke="${C.brown}" stroke-width="3" stroke-linecap="round"/><path d="M30 14 L35 28 L46 22 L42 34 L54 38 L42 44 L46 54 L34 50 L30 56 L26 50 L14 54 L18 44 L6 38 L18 34 L14 22 L25 28 Z" fill="${C.orange}"/><path d="M30 20 V54 M30 38 L44 26 M30 38 L16 26" stroke="#9c4512" stroke-width="1.2"/>`,
+    winter: () => `<g stroke="${C.blue}" stroke-width="2.6" stroke-linecap="round">` + [0, 60, 120].map(a => `<g transform="rotate(${a} 30 40)"><path d="M30 18 V62"/><path d="M30 25 L24 20 M30 25 L36 20 M30 55 L24 60 M30 55 L36 60"/></g>`).join('') + `</g><circle cx="30" cy="40" r="3" fill="${C.blue}"/>`,
+    cat: () => `<path d="M42 62 Q54 54 48 38" stroke="${C.orange}" stroke-width="4.5" fill="none" stroke-linecap="round"/><ellipse cx="30" cy="54" rx="14" ry="14" fill="${C.orange}"/>` +
+      `<path d="M20 26 L21 12 L29 21 Z M40 26 L39 12 L31 21 Z" fill="${C.orange}"/><circle cx="30" cy="31" r="11" fill="${C.orange}"/>` +
+      `<path d="M23 48 Q30 45 37 48 M22 55 Q30 52 38 55" stroke="#a5521a" stroke-width="2" fill="none"/>` +
+      `<circle cx="26" cy="30" r="2.2" fill="${C.green}"/><circle cx="34" cy="30" r="2.2" fill="${C.green}"/><path d="M28.5 35 L31.5 35 L30 37 Z" fill="${C.pink}"/>` +
+      `<path d="M22 37 L14 36 M22 39 L14 41 M38 37 L46 36 M38 39 L46 41" stroke="#5a3010" stroke-width="0.9"/>`,
+    rat: () => `<path d="M16 50 Q6 60 14 68 Q22 74 28 68" stroke="${C.pink}" stroke-width="2" fill="none" stroke-linecap="round"/><ellipse cx="29" cy="46" rx="15" ry="10" fill="${C.grey}"/>` +
+      `<ellipse cx="44" cy="41" rx="9" ry="6.5" fill="${C.grey}"/><circle cx="40" cy="33" r="5" fill="${C.grey}"/><circle cx="40" cy="33" r="2.8" fill="${C.pink}"/>` +
+      `<circle cx="46" cy="39" r="1.6" fill="#111"/><circle cx="53" cy="42" r="1.8" fill="${C.pink}"/><path d="M52 43 L58 41 M52 44 L58 46" stroke="#555" stroke-width="0.7"/>` +
+      `<path d="M22 55 L20 60 M36 55 L37 60" stroke="${C.pink}" stroke-width="2" stroke-linecap="round"/>`,
+    rooster: () => `<path d="M17 42 Q4 30 10 16 M17 45 Q2 40 4 26 M18 47 Q8 50 6 38" stroke="${C.green}" stroke-width="3.5" fill="none" stroke-linecap="round"/>` +
+      `<path d="M19 40 Q12 24 20 14" stroke="${C.blue}" stroke-width="3" fill="none" stroke-linecap="round"/>` +
+      `<ellipse cx="29" cy="46" rx="13" ry="11" fill="${C.orange}"/><path d="M34 40 Q38 30 38 24" stroke="${C.orange}" stroke-width="8" stroke-linecap="round"/>` +
+      `<circle cx="39" cy="22" r="6.5" fill="#e7a43a"/><path d="M34 16 Q35 9 38 14 Q40 8 42 14 Q45 10 45 17 Z" fill="${C.red}"/>` +
+      `<path d="M44 22 L51 24 L44 26 Z" fill="${C.gold}"/><path d="M42 27 Q44 33 40 31 Z" fill="${C.red}"/><circle cx="40" cy="20.5" r="1.4" fill="#111"/>` +
+      `<path d="M25 56 V66 M33 56 V66 M22 66 H28 M30 66 H36" stroke="${C.gold}" stroke-width="2.2" stroke-linecap="round"/>`,
+    centipede: () => {
+      const pts = [[14, 68], [17, 61], [21, 55], [26, 50], [31, 46], [35, 41], [38, 35], [40, 29], [42, 23]];
+      let legs = '', body = '';
+      pts.forEach(([x, y], i) => {
+        legs += `<path d="M${x - 7} ${y - 2} L${x + 7} ${y + 2}" stroke="#5a3010" stroke-width="1.4"/>`;
+        body += `<circle cx="${x}" cy="${y}" r="4.3" fill="${i % 2 ? '#b36b2a' : '#6b3a17'}"/>`;
+      });
+      return legs + body + `<circle cx="44" cy="17" r="4.6" fill="${C.red}"/><path d="M43 13 Q40 6 34 5 M46 13 Q50 6 56 6" stroke="#5a3010" stroke-width="1.2" fill="none"/>`;
+    },
+  };
+  const BONUS_ART = [['spring', '春'], ['summer', '夏'], ['autumn', '秋'], ['winter', '冬'], ['plum', '梅'], ['orchid', '蘭'], ['chrys', '菊'], ['bamboo', '竹'], ['cat', '貓'], ['rat', '鼠'], ['rooster', '雞'], ['centipede', '蜈蚣']];
+
+  const FACE = new Map();
+  function face(id) {
+    if (FACE.has(id)) return FACE.get(id);
+    let s = '';
+    if (id < 9) {
+      s = txt(30, 33, CN[id], 26, C.ink) + txt(30, 69, '萬', 29, C.red);
+    } else if (id < 18) {
+      const n = id - 9;
+      s = n === 0 ? bigDot() : DOTS[n].map(([x, y, c]) => dot(x, y, DOT_R[n], COLS[c])).join('');
+    } else if (id < 27) {
+      const n = id - 18;
+      s = n === 0 ? bird() : BAMBOO[n].map(([x, y, h, c, a]) => stick(x, y, h, COLS[c], a || 0)).join('');
+    } else if (id < 31) {
+      s = txt(30, 54, ['東', '南', '西', '北'][id - 27], 40, C.ink);
+    } else if (id === 31) {
+      s = `<rect x="12" y="14" width="36" height="52" rx="3" fill="none" stroke="${C.blue}" stroke-width="4"/><rect x="18" y="20" width="24" height="40" rx="2" fill="none" stroke="${C.blue}" stroke-width="1.5"/>`;
+    } else if (id === 32) {
+      s = txt(30, 54, '發', 40, C.green);
+    } else if (id === 33) {
+      s = txt(30, 54, '中', 42, C.red);
+    } else {
+      const [art, ch] = BONUS_ART[id - 34];
+      const num = id < 42 ? txt(8, 14, String((id - 34) % 4 + 1), 13, id < 38 ? C.red : C.blue, 'start') : '';
+      s = ART[art]() + num + txt(53, 75, ch, ch.length > 1 ? 8 : 10, C.ink, 'end');
+    }
+    const svg = `<svg viewBox="0 0 60 80" aria-hidden="true">${s}</svg>`;
+    FACE.set(id, svg);
+    return svg;
+  }
   function tile(id, cls = '') {
     if (id == null) return '';
-    const aria = `role="img" aria-label="${tileName(id)}"`;
-    if (id < 27) {
-      const [s, c] = SUIT[Math.floor(id / 9)];
-      return `<span class="t two ${cls}" ${aria}><span class="n">${CN[id % 9]}</span><span class="s ${c}">${s}</span></span>`;
-    }
-    if (id < 34) {
-      if (id === 31) return `<span class="t one white ${cls}" ${aria}></span>`;
-      const ch = ['東', '南', '西', '北', '', '發', '中'][id - 27];
-      const c = id === 32 ? 'green' : id === 33 ? 'red' : 'blue';
-      return `<span class="t one ${c} ${cls}" ${aria}>${ch}</span>`;
-    }
-    const [ch, c] = BONUS[id - 34];
-    const k = id < 42 ? `<span class="k">${(id - 34) % 4 + 1}</span>` : '';
-    return `<span class="t one ${ch.length > 1 ? 'long' : ''} ${c} ${cls}" ${aria}>${ch}${k}</span>`;
+    return `<span class="t ${cls}" role="img" aria-label="${tileName(id)}">${face(id)}</span>`;
   }
   const back = (cls = '') => `<span class="t back ${cls}" aria-hidden="true"></span>`;
 
@@ -314,7 +427,7 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
             return tile(t, cls);
           }).join('') + (drawn != null ? tile(drawn, 'drawn' + (isActing && pickTile === drawn && !pickedOnce ? ' pick' : '')) : '');
       const melds = p.melds.map(m => `<span class="meld">${m.tiles.map(t => m.kind === 'concealed_kong' ? tile(t, 'sm') : tile(t, 'sm')).join('')}</span>`).join('');
-      const bonus = p.bonus.map(b => tile(b, 'xs')).join('');
+      const bonus = p.bonus.map(b => tile(b, 'sm')).join('');
       const lastDisc = p.discards.length - 1;
       const discards = p.discards.map(([t, claimed], i) => {
         let cls = 'xs';
