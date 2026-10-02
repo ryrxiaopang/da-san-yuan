@@ -168,12 +168,12 @@ The original `shard_*/hands.csv` files stay as they are: the loader and training
 
 ## Replay viewer
 
-`web/replay/index.html` replays real hands from the dataset move by move and shows, for every decision, the training row being recorded: the 672-number snapshot, the allowed moves and the one chosen, the hidden answers used to train the opponent reader, and the points added as the reward when the hand ends. Open it in any browser.
+`web/replay/index.html` plays one full game (hands 17–32 of the dataset, East round to North round) on its own, with an action log and running points by play style. It replays real hands move by move and shows, for every decision, the training row being recorded: the 672-number snapshot, the allowed moves and the one chosen, the hidden answers used to train the opponent reader, and the points added as the reward when the hand ends. Open it in any browser.
 
 The hands are reproduced exactly (same line-up, same bot seeds), so each one matches its rows in `hands.csv` and the database. To show other hands:
 
 ```bash
-dsy trace --hands 380,241,27,19 --out web/replay/replay.json   # 0-based hand ids from the run
+dsy trace --hands 16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 --out web/replay/replay.json   # 0-based hand ids
 python web/replay/build.py
 ```
 
