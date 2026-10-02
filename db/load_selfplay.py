@@ -88,7 +88,7 @@ def copy_df(cur, table: str, df: pd.DataFrame) -> None:
     if df.empty:
         return
     buf = io.StringIO()
-    df.to_csv(buf, index=False, header=False, na_rep="\\N")
+    df.to_csv(buf, index=False, header=False, na_rep="\\N", lineterminator="\n")  # \n on Windows too
     cols = ", ".join(df.columns)
     with cur.copy(f"COPY {table} ({cols}) FROM STDIN WITH (FORMAT csv, NULL '\\N')") as cp:
         cp.write(buf.getvalue())
