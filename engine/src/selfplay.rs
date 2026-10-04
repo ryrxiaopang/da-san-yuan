@@ -150,6 +150,10 @@ pub struct SelfPlayConfig {
     pub out_dir: PathBuf,
     /// Write gzip-compressed .npy.gz files.
     pub compress: bool,
+    /// Full-game mode when > 0: play this many complete games (East round to North
+    /// round, dealer stays on a dealer win or a kong-free draw) instead of `hands`
+    /// independent hands. `shard_size` then counts games per shard.
+    pub games: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -161,10 +165,107 @@ pub struct ShardSummary {
 }
 
 pub fn hand_csv_header() -> &'static str {
-    "hand_id,seed,dealer,prevailing,bot0,bot1,bot2,bot3,winner,discarder,self_draw,tai,raw_tai,patterns,d0,d1,d2,d3,turns"
+    "hand_id,seed,dealer,prevailing,bot0,bot1,bot2,bot3,winner,discarder,self_draw,tai,raw_tai,patterns,d0,d1,d2,d3,turns,game,dealer_no,repeat,hand_in_game"
 }
 
-fn hand_csv_row(hand_id: u64, seed: u64, cfg: &Config, names: &[String; 4], r: &HandResult) -> String {
+/// Where a hand sits in a full game, all 1-based except `repeat`:
+/// game 1, East round (prevailing), dealer 1-4 within the round, repeat 0, 1, 2...
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HandLabel {
+    pub game: u64,
+    pub dealer_no: u8,
+    pub repeat: u32,
+    pub hand_in_game: u32,
+}
+
+impl HandLabel {
+    /// Label for independent-hand mode, where the dealer passes every hand.
+    pub fn rotating(hand_id: u64) -> Self {
+        HandLabel { game: hand_id / 16 + 1, dealer_no: (hand_id % 4) as u8 + 1, repeat: 0, hand_in_game: (hand_id % 16) as u32 + 1 }
+    }
+}
+
+/// Position within a full game: round wind, which of the round's four dealers, and repeats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GameProgress {
+    /// 0 = East round .. 3 = North round.
+    pub prevailing: u8,
+    /// 0..=3: the round's first to fourth dealer, which is also the dealer's seat.
+    pub dealer_no: u8,
+    /// How many times the current dealer has stayed on.
+    pub repeat: u32,
+}
+
+impl GameProgress {
+    pub fn start() -> Self {
+        GameProgress { prevailing: 0, dealer_no: 0, repeat: 0 }
+    }
+    /// The next hand's position, or None when the game is over.
+    /// The dealer stays after a dealer win, or after a draw in which nobody holds a kong;
+    /// otherwise the deal passes to the next seat. After the fourth dealer of a round the
+    /// round wind moves on, and the game ends after the North round.
+    pub fn next(&self, dealer_won: bool, draw: bool, any_kong: bool) -> Option<Self> {
+        if dealer_won || (draw && !any_kong) {
+            return Some(GameProgress { repeat: self.repeat + 1, ..*self });
+        }
+        if self.dealer_no < 3 {
+            return Some(GameProgress { dealer_no: self.dealer_no + 1, repeat: 0, ..*self });
+        }
+        if self.prevailing < 3 {
+            return Some(GameProgress { prevailing: self.prevailing + 1, dealer_no: 0, repeat: 0 });
+        }
+        None
+    }
+}
+
+/// Style ids for the four players of full game `game` (0-based); they keep their seats all game.
+pub fn game_lineup(cfg: &SelfPlayConfig, game: u64) -> [usize; 4] {
+    if !cfg.random_lineup {
+        return std::array::from_fn(|i| i % cfg.styles.len());
+    }
+    let mut rng = Rng::derive(cfg.seed ^ 0x6A3E5, game);
+    std::array::from_fn(|_| rng.below(cfg.styles.len() as u64) as usize)
+}
+
+/// hand_id of the i-th hand (0-based) of full game `game` (0-based): unique and sortable.
+pub fn full_game_hand_id(game: u64, i: u64) -> u64 {
+    game * 1000 + i
+}
+
+/// Play one full game. `on_decision(game, seat, action, hand_id)` fires before every
+/// action; `on_hand(hand_id, seed, config, label, result, final_state)` after every hand.
+/// Returns the style ids of the four seats.
+pub fn play_full_game<D, H>(cfg: &SelfPlayConfig, game_no: u64, mut on_decision: D, mut on_hand: H) -> [usize; 4]
+where
+    D: FnMut(&Game, u8, crate::game::Action, u64),
+    H: FnMut(u64, u64, &Config, &HandLabel, &HandResult, &Game),
+{
+    let ids = game_lineup(cfg, game_no);
+    let gseed = hand_seed(cfg.seed ^ 0x6A3E5, game_no);
+    let mut bots: [Box<dyn Bot>; 4] = std::array::from_fn(|i| {
+        Box::new(HeuristicBot::new(cfg.styles[ids[i]].clone(), gseed ^ (i as u64 + 1) * 0x9E37)) as Box<dyn Bot>
+    });
+    let mut prog = GameProgress::start();
+    let mut i = 0u64;
+    loop {
+        let hand_id = full_game_hand_id(game_no, i);
+        let seed = hand_seed(cfg.seed, hand_id);
+        let hcfg = Config { dealer: prog.dealer_no, prevailing_wind: prog.prevailing, ..Default::default() };
+        let (end, r) = play_hand(Game::new(hcfg.clone(), seed), &mut bots, |g, s, a| on_decision(g, s, a, hand_id));
+        let label = HandLabel { game: game_no + 1, dealer_no: prog.dealer_no + 1, repeat: prog.repeat, hand_in_game: i as u32 + 1 };
+        on_hand(hand_id, seed, &hcfg, &label, &r, &end);
+        let any_kong = end.players.iter().any(|p| p.melds.iter().any(|m| m.is_kong()));
+        match prog.next(r.winner == Some(prog.dealer_no), r.winner.is_none(), any_kong) {
+            Some(n) => prog = n,
+            None => break,
+        }
+        i += 1;
+        assert!(i < 1000, "game {} did not finish", game_no);
+    }
+    ids
+}
+
+fn hand_csv_row(hand_id: u64, seed: u64, cfg: &Config, names: &[String; 4], r: &HandResult, label: &HandLabel) -> String {
     let (tai, raw, pats) = match &r.score {
         Some(s) => (
             s.tai as i32,
@@ -174,7 +275,7 @@ fn hand_csv_row(hand_id: u64, seed: u64, cfg: &Config, names: &[String; 4], r: &
         None => (0, 0, String::new()),
     };
     format!(
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},\"{}\",{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},\"{}\",{},{},{},{},{},{},{},{},{}",
         hand_id,
         seed,
         cfg.dealer,
@@ -193,7 +294,11 @@ fn hand_csv_row(hand_id: u64, seed: u64, cfg: &Config, names: &[String; 4], r: &
         r.deltas[1],
         r.deltas[2],
         r.deltas[3],
-        r.turns
+        r.turns,
+        label.game,
+        label.dealer_no,
+        label.repeat,
+        label.hand_in_game
     )
 }
 
@@ -210,24 +315,27 @@ pub fn run_selfplay(cfg: &SelfPlayConfig) -> std::io::Result<ShardSummary> {
             writeln!(f, "{},{}", i, s.to_csv())?;
         }
     }
-    {
-        let mut f = File::create(cfg.out_dir.join("format.txt"))?;
-        writeln!(
-            f,
-            "obs_version={}\nobs_len={}\nn_actions={}\noracle_len={}\nwaits_shape=3,34\nshanten_len={}\nmeta_cols=hand_id,seat,bot_id,points,won,dealt_in",
-            OBS_VERSION, OBS_LEN, N_ACTIONS, ORACLE_LEN, SHANTEN_LEN
-        )?;
-        writeln!(f, "seed={}\nhands={}\nrandom_lineup={}", cfg.seed, cfg.hands, cfg.random_lineup)?;
-    }
-    let n_shards = cfg.hands.div_ceil(cfg.shard_size);
-    let summaries: Vec<std::io::Result<ShardSummary>> = (0..n_shards)
-        .into_par_iter()
-        .map(|shard| {
-            let first = shard * cfg.shard_size;
-            let last = ((shard + 1) * cfg.shard_size).min(cfg.hands);
-            run_shard(cfg, shard, first, last)
-        })
-        .collect();
+    let summaries: Vec<std::io::Result<ShardSummary>> = if cfg.games > 0 {
+        let n_shards = cfg.games.div_ceil(cfg.shard_size);
+        (0..n_shards)
+            .into_par_iter()
+            .map(|shard| {
+                let first = shard * cfg.shard_size;
+                let last = ((shard + 1) * cfg.shard_size).min(cfg.games);
+                run_game_shard(cfg, shard, first, last)
+            })
+            .collect()
+    } else {
+        let n_shards = cfg.hands.div_ceil(cfg.shard_size);
+        (0..n_shards)
+            .into_par_iter()
+            .map(|shard| {
+                let first = shard * cfg.shard_size;
+                let last = ((shard + 1) * cfg.shard_size).min(cfg.hands);
+                run_shard(cfg, shard, first, last)
+            })
+            .collect()
+    };
     let mut total = ShardSummary::default();
     for s in summaries {
         let s = s?;
@@ -236,6 +344,15 @@ pub fn run_selfplay(cfg: &SelfPlayConfig) -> std::io::Result<ShardSummary> {
         total.wins += s.wins;
         total.draws += s.draws;
     }
+    // Written last so it records the real hand count (full games vary in length).
+    let mut f = File::create(cfg.out_dir.join("format.txt"))?;
+    writeln!(
+        f,
+        "obs_version={}\nobs_len={}\nn_actions={}\noracle_len={}\nwaits_shape=3,34\nshanten_len={}\nmeta_cols=hand_id,seat,bot_id,points,won,dealt_in",
+        OBS_VERSION, OBS_LEN, N_ACTIONS, ORACLE_LEN, SHANTEN_LEN
+    )?;
+    writeln!(f, "seed={}\nhands={}\nrandom_lineup={}", cfg.seed, total.hands, cfg.random_lineup)?;
+    writeln!(f, "mode={}\ngames={}", if cfg.games > 0 { "full_games" } else { "hands" }, cfg.games)?;
     Ok(total)
 }
 
@@ -265,7 +382,7 @@ fn run_shard(cfg: &SelfPlayConfig, shard: u64, first: u64, last: u64) -> std::io
             buf.record(g, seat, a, hand_id as i32, ids[seat as usize] as i32)
         });
         buf.fill_outcome(start_row, &r);
-        writeln!(csv, "{}", hand_csv_row(hand_id, seed, &gcfg, &names, &r))?;
+        writeln!(csv, "{}", hand_csv_row(hand_id, seed, &gcfg, &names, &r, &HandLabel::rotating(hand_id)))?;
         summary.hands += 1;
         if r.winner.is_some() {
             summary.wins += 1;
@@ -274,17 +391,60 @@ fn run_shard(cfg: &SelfPlayConfig, shard: u64, first: u64, last: u64) -> std::io
         }
     }
     csv.flush()?;
+    write_shard_arrays(&dir, &buf, cfg.compress)?;
+    summary.decisions = buf.rows;
+    Ok(summary)
+}
+
+fn run_game_shard(cfg: &SelfPlayConfig, shard: u64, first: u64, last: u64) -> std::io::Result<ShardSummary> {
+    let dir = cfg.out_dir.join(format!("shard_{:05}", shard));
+    fs::create_dir_all(&dir)?;
+    let buf = std::cell::RefCell::new(Buffers::default());
+    let mut lines: Vec<String> = Vec::new();
+    let mut summary = ShardSummary::default();
+    for game_no in first..last {
+        let ids = game_lineup(cfg, game_no);
+        let names: [String; 4] = std::array::from_fn(|i| cfg.styles[ids[i]].name.clone());
+        let mut start_row = buf.borrow().rows;
+        play_full_game(
+            cfg,
+            game_no,
+            |g, seat, a, hand_id| buf.borrow_mut().record(g, seat, a, hand_id as i32, ids[seat as usize] as i32),
+            |hand_id, seed, hcfg, label, r, _| {
+                let mut b = buf.borrow_mut();
+                b.fill_outcome(start_row, r);
+                start_row = b.rows;
+                lines.push(hand_csv_row(hand_id, seed, hcfg, &names, r, label));
+                summary.hands += 1;
+                if r.winner.is_some() {
+                    summary.wins += 1;
+                } else {
+                    summary.draws += 1;
+                }
+            },
+        );
+    }
+    let mut csv = BufWriter::new(File::create(dir.join("hands.csv"))?);
+    writeln!(csv, "{}", hand_csv_header())?;
+    for l in &lines {
+        writeln!(csv, "{}", l)?;
+    }
+    csv.flush()?;
+    let buf = buf.into_inner();
+    write_shard_arrays(&dir, &buf, cfg.compress)?;
+    summary.decisions = buf.rows;
+    Ok(summary)
+}
+
+fn write_shard_arrays(dir: &Path, buf: &Buffers, z: bool) -> std::io::Result<()> {
     let n = buf.rows;
-    let z = cfg.compress;
     write_npy_u8(&dir.join("obs.npy"), &buf.obs, &[n, OBS_LEN], z)?;
     write_npy_u8(&dir.join("mask.npy"), &buf.mask, &[n, N_ACTIONS], z)?;
     write_npy_u8(&dir.join("action.npy"), &buf.action, &[n], z)?;
     write_npy_u8(&dir.join("oracle.npy"), &buf.oracle, &[n, ORACLE_LEN], z)?;
     write_npy_u8(&dir.join("waits.npy"), &buf.waits, &[n, 3, 34], z)?;
     write_npy_i8(&dir.join("shanten.npy"), &buf.shanten, &[n, SHANTEN_LEN], z)?;
-    write_npy_i32(&dir.join("meta.npy"), &buf.meta, &[n, META_COLS], z)?;
-    summary.decisions = n;
-    Ok(summary)
+    write_npy_i32(&dir.join("meta.npy"), &buf.meta, &[n, META_COLS], z)
 }
 
 // ------------------------------------------------------------- tournament

@@ -52,7 +52,7 @@ Without `cargo install`, run it as `target/release/dsy` (`target\release\dsy.exe
 dsy score "123m456p789s123s99m" --win 1s --seat 1
 
 # Generate training data (all cores). 100k hands is about 700 MB compressed.
-dsy selfplay --hands 100000 --out data/selfplay
+dsy selfplay --games 5000 --out data/selfplay   # 5,000 full games, about 116,000 hands
 
 # Fair comparison: every wall is played 4 times with the bots rotated through all seats.
 dsy tournament --styles fast,high_tai,defensive,balanced --walls 5000
@@ -132,8 +132,8 @@ Training reads the `.npy` shards directly. For analysis and reporting, hand-leve
 docker compose -f db/docker-compose.yml up -d        # or any PostgreSQL 13+; set DATABASE_URL
 pip install numpy pandas "psycopg[binary]" matplotlib jupyter
 
-dsy selfplay --hands 20000 --out data/run20k
-python db/load_selfplay.py data/run20k               # --replace to reload, --no-decisions for hands only
+dsy selfplay --games 1000 --out data/games1000     # about 23,000 hands
+python db/load_selfplay.py data/games1000               # --replace to reload, --no-decisions for hands only
 psql postgresql://dsy:dsy@localhost:5432/dasanyuan -c "select * from v_style_summary"
 ```
 
@@ -146,15 +146,19 @@ Size guide: 20,000 hands is about 1.2 million decision rows and roughly 300 MB i
 For browsing results in Excel or pgAdmin, there is a plain-language version of the hands:
 
 ```bash
-python tools/readable_hands.py data/run20k     # writes data/run20k/hands_readable.csv
+python tools/readable_hands.py data/games1000     # writes data/games1000/hands_readable.csv
 ```
 
-In PostgreSQL the same table is the view `v_hands_readable` (`SELECT * FROM v_hands_readable WHERE run_id = 1 LIMIT 20;`).
+In PostgreSQL the same table is the view `v_hands_readable` (`SELECT * FROM v_hands_readable WHERE run_id = 1 ORDER BY hand_id LIMIT 20;`).
 
 | Column | Meaning |
 |---|---|
-| Hand | Hand number, starting at 1 |
-| Round wind | The prevailing wind of the round: East, South, West, then North (changes every 4 hands) |
+| Game | Which full game, starting at 1 |
+| Round | East, South, West or North round (the prevailing wind) |
+| Dealer no. | 1 to 4: which of the round's four dealers is dealing |
+| Repeat | 0 for the dealer's first hand; 1, 2 ... when the dealer won or drew without a kong and dealt again |
+| Hand in game | Every hand of the game counted in order: 1, 2, 3 ... |
+| Hand | All of the above as one label, e.g. "Game 1, East round, Dealer 4, Repeat 1" |
 | East player (dealer) … North player | The play style sitting at each wind: Fast, High-tai, Defensive or Balanced. The dealer always sits East, and seats move every hand |
 | Result | Won on a discard, Self-drawn win, or Draw (no winner) |
 | Winner | Who won, as wind and style, e.g. "South (Balanced)". The style alone is not enough because two players can share a style |
@@ -168,12 +172,12 @@ The original `shard_*/hands.csv` files stay as they are: the loader and training
 
 ## Replay viewer
 
-`web/replay/index.html` plays one full game (hands 17–32 of the dataset, East round to North round) on its own, with an action log and running points by play style. It replays real hands move by move and shows, for every decision, the training row being recorded: the 672-number snapshot, the allowed moves and the one chosen, the hidden answers used to train the opponent reader, and the points added as the reward when the hand ends. Open it in any browser.
+`web/replay/index.html` plays Game 1 of the 1,000-game dataset on its own, from the East round to the North round with real dealer repeats, with an action log and running points by play style. It replays real hands move by move and shows, for every decision, the training row being recorded: the 672-number snapshot, the allowed moves and the one chosen, the hidden answers used to train the opponent reader, and the points added as the reward when the hand ends. Open it in any browser.
 
 The hands are reproduced exactly (same line-up, same bot seeds), so each one matches its rows in `hands.csv` and the database. To show other hands:
 
 ```bash
-dsy trace --hands 16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 --out web/replay/replay.json   # 0-based hand ids
+dsy trace --game 1 --out web/replay/replay.json   # any game number from the run
 python web/replay/build.py
 ```
 

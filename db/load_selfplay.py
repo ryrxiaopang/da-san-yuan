@@ -109,6 +109,9 @@ def hand_tables(run_id: int, shard: str):
         "raw_tai": h.raw_tai,
         "turns": h.turns,
     })
+    # Full-game position (only in runs made with `dsy selfplay --games`).
+    for src, dst in (("game", "game"), ("dealer_no", "dealer_no"), ("repeat", "repeat_no"), ("hand_in_game", "hand_in_game")):
+        hands[dst] = h[src].astype("Int64") if src in h.columns else pd.array([pd.NA] * len(h), dtype="Int64")
     seats = []
     for s in range(4):
         seats.append(pd.DataFrame({

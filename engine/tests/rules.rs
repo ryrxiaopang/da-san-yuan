@@ -371,3 +371,68 @@ fn scenario_bank_is_valid_and_rules_hold() {
         }
     }
 }
+
+// ------------------------------------------------------------ full games
+
+#[test]
+fn dealer_progression_follows_team_rules() {
+    use dsy_engine::selfplay::GameProgress;
+    let start = GameProgress::start();
+    // dealer wins: stays, repeat counter goes up
+    let p = start.next(true, false, false).unwrap();
+    assert_eq!((p.prevailing, p.dealer_no, p.repeat), (0, 0, 1));
+    // draw with no kong: dealer stays
+    let p = p.next(false, true, false).unwrap();
+    assert_eq!((p.prevailing, p.dealer_no, p.repeat), (0, 0, 2));
+    // draw where someone holds a kong: deal passes
+    let p = p.next(false, true, true).unwrap();
+    assert_eq!((p.prevailing, p.dealer_no, p.repeat), (0, 1, 0));
+    // another player wins: deal passes
+    let p = p.next(false, false, false).unwrap();
+    assert_eq!((p.dealer_no, p.repeat), (2, 0));
+    // after the fourth dealer the round wind moves on
+    let p = GameProgress { prevailing: 0, dealer_no: 3, repeat: 2 }.next(false, false, false).unwrap();
+    assert_eq!((p.prevailing, p.dealer_no, p.repeat), (1, 0, 0));
+    // the game ends after the North round's fourth dealer loses the deal
+    assert!(GameProgress { prevailing: 3, dealer_no: 3, repeat: 0 }.next(false, false, false).is_none());
+    // ...but not while the North dealer keeps winning
+    assert!(GameProgress { prevailing: 3, dealer_no: 3, repeat: 0 }.next(true, false, false).is_some());
+}
+
+#[test]
+fn full_games_have_consistent_labels() {
+    use dsy_engine::selfplay::{play_full_game, SelfPlayConfig};
+    let cfg = SelfPlayConfig {
+        hands: 0,
+        seed: 3,
+        styles: Style::archetypes(),
+        random_lineup: true,
+        shard_size: 10,
+        out_dir: std::path::PathBuf::new(),
+        compress: false,
+        games: 0,
+    };
+    for game in 0..20 {
+        let mut labels = Vec::new();
+        play_full_game(&cfg, game, |_, _, _, _| {}, |_, _, hcfg, label, r, end| {
+            let any_kong = end.players.iter().any(|p| p.melds.iter().any(|m| m.is_kong()));
+            labels.push((hcfg.prevailing_wind, hcfg.dealer, *label, r.winner, any_kong));
+        });
+        assert!(labels.len() >= 16, "a full game has at least 16 hands");
+        for (i, w) in labels.windows(2).enumerate() {
+            let (pw, d, l, winner, kong) = w[0];
+            let (pw2, d2, l2, _, _) = w[1];
+            assert_eq!(l.dealer_no, d + 1);
+            assert_eq!(l2.hand_in_game as usize, i + 2);
+            let stays = winner == Some(d) || (winner.is_none() && !kong);
+            if stays {
+                assert_eq!((pw2, d2, l2.repeat), (pw, d, l.repeat + 1));
+            } else {
+                assert_eq!(l2.repeat, 0);
+                assert!(pw2 * 4 + d2 == pw * 4 + d + 1);
+            }
+        }
+        let (pw, d, ..) = *labels.last().unwrap();
+        assert_eq!((pw, d), (3, 3), "game ends with the North round's fourth dealer");
+    }
+}

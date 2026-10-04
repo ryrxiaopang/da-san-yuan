@@ -27,6 +27,11 @@ struct Cli {
 enum Cmd {
     /// Generate self-play training data as .npy shards.
     Selfplay {
+        /// Play this many complete games (East to North round, real dealer rules).
+        /// Recommended: about 21 hands per game. Overrides --hands.
+        #[arg(long, default_value_t = 0)]
+        games: u64,
+        /// Independent hands with the dealer passing every hand (used when --games is 0).
         #[arg(long, default_value_t = 10_000)]
         hands: u64,
         #[arg(long, default_value_t = 1)]
@@ -34,11 +39,12 @@ enum Cmd {
         /// Comma-separated styles (fast, high_tai, defensive, balanced) or a styles CSV file.
         #[arg(long, default_value = "fast,high_tai,defensive,balanced")]
         styles: String,
-        /// Keep styles fixed by seat instead of sampling a random lineup each hand.
+        /// Keep styles fixed by seat instead of sampling a random lineup each hand (or game).
         #[arg(long)]
         fixed_lineup: bool,
-        #[arg(long, default_value_t = 2_000)]
-        shard_size: u64,
+        /// Hands per shard, or games per shard with --games (default 2,000 hands / 100 games).
+        #[arg(long)]
+        shard_size: Option<u64>,
         #[arg(long, default_value = "data/selfplay")]
         out: PathBuf,
         /// Write plain .npy instead of gzip-compressed .npy.gz (about 15x larger on disk).
@@ -107,7 +113,11 @@ enum Cmd {
     /// every decision with the table state, legal moves, the move taken and the
     /// exact row recorded for training. Hands are reproduced move for move.
     Trace {
-        /// Hand ids to export (0-based, as in hands.csv), comma-separated.
+        /// Export every hand of these full games (1-based game numbers, comma-separated),
+        /// from a run made with `selfplay --games`.
+        #[arg(long)]
+        game: Option<String>,
+        /// Hand ids to export from an independent-hands run (0-based, as in hands.csv).
         #[arg(long, default_value = "0")]
         hands: String,
         /// Seed and shard size of the run to reproduce (defaults match `dsy selfplay`).
@@ -191,12 +201,16 @@ fn main() {
     }
     dsy_engine::shanten::init_tables();
     match cli.cmd {
-        Cmd::Selfplay { hands, seed, styles, fixed_lineup, shard_size, out, no_compress } => {
+        Cmd::Selfplay { games, hands, seed, styles, fixed_lineup, shard_size, out, no_compress } => {
             let styles = parse_styles(&styles);
             let t = Instant::now();
-            let cfg = SelfPlayConfig { hands, seed, styles, random_lineup: !fixed_lineup, shard_size, out_dir: out.clone(), compress: !no_compress };
+            let shard_size = shard_size.unwrap_or(if games > 0 { 100 } else { 2_000 });
+            let cfg = SelfPlayConfig { hands, seed, styles, random_lineup: !fixed_lineup, shard_size, out_dir: out.clone(), compress: !no_compress, games };
             let s = selfplay::run_selfplay(&cfg).expect("self-play failed");
             let secs = t.elapsed().as_secs_f64();
+            if games > 0 {
+                println!("{} full games, {:.1} hands per game on average.", games, s.hands as f64 / games as f64);
+            }
             println!(
                 "{} hands, {} decisions in {:.1}s ({:.0} hands/s). Wins {:.1}%, draws {:.1}%. Data in {}",
                 s.hands,
@@ -346,7 +360,7 @@ fn main() {
                 println!("{:<30}{}", format!("  [{}]", tag), v.iter().map(|(a, b)| format!("{:>10.0}%", 100.0 * a / *b as f64)).collect::<String>());
             }
         }
-        Cmd::Trace { hands, seed, shard_size, styles, fixed_lineup, out } => {
+        Cmd::Trace { game, hands, seed, shard_size, styles, fixed_lineup, out } => {
             let cfg = SelfPlayConfig {
                 hands: 0,
                 seed,
@@ -355,9 +369,19 @@ fn main() {
                 shard_size,
                 out_dir: PathBuf::new(),
                 compress: false,
+                games: 0,
             };
-            let ids: Vec<u64> = hands.split(',').map(|h| h.trim().parse().expect("hand ids are numbers")).collect();
-            let games: Vec<serde_json::Value> = ids.iter().map(|&h| trace::trace_hand(&cfg, h)).collect();
+            let games: Vec<serde_json::Value> = match &game {
+                Some(list) => list
+                    .split(',')
+                    .flat_map(|g| trace::trace_game(&cfg, g.trim().parse::<u64>().expect("game numbers") - 1))
+                    .collect(),
+                None => hands
+                    .split(',')
+                    .map(|h| trace::trace_hand(&cfg, h.trim().parse().expect("hand ids are numbers")))
+                    .collect(),
+            };
+            let ids = &games;
             let doc = serde_json::json!({
                 "format": 1,
                 "obs_version": dsy_engine::obs::OBS_VERSION,

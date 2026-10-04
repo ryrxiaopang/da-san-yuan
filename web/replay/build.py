@@ -1,13 +1,13 @@
 """Build the replay page from a trace exported by `dsy trace`.
 
-    dsy trace --hands 16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 --out web/replay/replay.json
+    dsy trace --game 1 --out web/replay/replay.json
     python web/replay/build.py
 
 Writes web/replay/index.html, a single self-contained page: open it in any
 browser. Tile pictures come from web/replay/tiles/<id>.webp (00-08 characters,
 09-17 dots, 18-26 bamboo, 27-30 winds, 31-33 white/green/red dragons,
 34-37 seasons, 38-41 flowers, 42-45 cat/rat/rooster/centipede). The hands must come from the run you are describing (by default the
-20,000-hand run made with `dsy selfplay --hands 20000 --out data/run20k`).
+1,000-game run made with `dsy selfplay --games 1000 --out data/games1000`).
 """
 import base64
 import glob

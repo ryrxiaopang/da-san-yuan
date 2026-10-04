@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS hands (
     PRIMARY KEY (run_id, hand_id)
 );
 
+-- Position of each hand in a full game (empty for older independent-hand runs).
+ALTER TABLE hands ADD COLUMN IF NOT EXISTS game         integer;   -- 1, 2, 3 ...
+ALTER TABLE hands ADD COLUMN IF NOT EXISTS dealer_no    smallint;  -- 1-4: the round's first to fourth dealer
+ALTER TABLE hands ADD COLUMN IF NOT EXISTS repeat_no    smallint;  -- 0 = dealer's first hand, 1 = first repeat ...
+ALTER TABLE hands ADD COLUMN IF NOT EXISTS hand_in_game smallint;  -- 1, 2, 3 ... counting every hand of the game
+
 CREATE TABLE IF NOT EXISTS hand_seats (
     run_id     integer NOT NULL,
     hand_id    integer NOT NULL,
@@ -123,10 +129,11 @@ FROM decisions
 WHERE action_type = 'discard' AND unsafe_options > 0
 GROUP BY run_id, bot;
 
--- One easy-to-read row per hand: players named by seat wind and play style,
--- e.g. "South (Balanced)". Seat winds move every hand (the dealer is East).
+-- One easy-to-read row per hand: where it sits in the game (Game 1, East round,
+-- Dealer 1, Repeat 0), players named by seat wind and play style, e.g. "South (Balanced)".
 -- Same layout as tools/readable_hands.py. Filter with WHERE run_id = ...
-CREATE OR REPLACE VIEW v_hands_readable AS
+DROP VIEW IF EXISTS v_hands_readable;
+CREATE VIEW v_hands_readable AS
 WITH seats AS (
     SELECT run_id, hand_id, seat, seat_wind, points,
            (ARRAY['East','South','West','North'])[seat_wind + 1] AS wind_name,
@@ -143,10 +150,25 @@ pats AS (
     FROM (SELECT run_id, hand_id, pattern, count(*) AS n, sum(tai) AS t
           FROM hand_patterns GROUP BY run_id, hand_id, pattern) x
     GROUP BY run_id, hand_id
+),
+pos AS (
+    -- Older runs (dealer passed every hand) have no labels: derive them.
+    SELECT run_id, hand_id,
+           coalesce(game, hand_id / 16 + 1)                 AS game,
+           coalesce(dealer_no, (hand_id % 4) + 1)           AS dealer_no,
+           coalesce(repeat_no, 0)                           AS repeat_no,
+           coalesce(hand_in_game, (hand_id % 16) + 1)       AS hand_in_game
+    FROM hands
 )
 SELECT h.run_id,
-       h.hand_id + 1                                                     AS "Hand",
-       (ARRAY['East','South','West','North'])[h.prevailing + 1]          AS "Round wind",
+       pos.game                                                          AS "Game",
+       (ARRAY['East','South','West','North'])[h.prevailing + 1] || ' round' AS "Round",
+       pos.dealer_no                                                     AS "Dealer no.",
+       pos.repeat_no                                                     AS "Repeat",
+       pos.hand_in_game                                                  AS "Hand in game",
+       'Game ' || pos.game || ', ' || (ARRAY['East','South','West','North'])[h.prevailing + 1]
+           || ' round, Dealer ' || pos.dealer_no
+           || CASE WHEN pos.repeat_no > 0 THEN ', Repeat ' || pos.repeat_no ELSE '' END AS "Hand",
        max(s.style) FILTER (WHERE s.seat_wind = 0)                       AS "East player (dealer)",
        max(s.style) FILTER (WHERE s.seat_wind = 1)                       AS "South player",
        max(s.style) FILTER (WHERE s.seat_wind = 2)                       AS "West player",
@@ -167,9 +189,11 @@ SELECT h.run_id,
        max(s.points) FILTER (WHERE s.seat_wind = 1)                      AS "South points",
        max(s.points) FILTER (WHERE s.seat_wind = 2)                      AS "West points",
        max(s.points) FILTER (WHERE s.seat_wind = 3)                      AS "North points",
-       h.turns                                                           AS "Turns"
+       h.turns                                                           AS "Turns",
+       h.hand_id                                                         AS hand_id
 FROM hands h
+JOIN pos USING (run_id, hand_id)
 JOIN seats s USING (run_id, hand_id)
 LEFT JOIN pats p USING (run_id, hand_id)
 GROUP BY h.run_id, h.hand_id, h.prevailing, h.winner, h.discarder, h.self_draw,
-         h.tai, h.raw_tai, h.turns, p.how;
+         h.tai, h.raw_tai, h.turns, p.how, pos.game, pos.dealer_no, pos.repeat_no, pos.hand_in_game;

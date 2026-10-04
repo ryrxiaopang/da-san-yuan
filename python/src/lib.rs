@@ -195,7 +195,7 @@ fn oracle_len() -> usize {
 
 /// Generate self-play shards (runs on all cores, releases the GIL).
 #[pyfunction]
-#[pyo3(signature = (out_dir, hands=10000, seed=1, styles=vec!["fast".to_string(), "high_tai".to_string(), "defensive".to_string(), "balanced".to_string()], random_lineup=true, shard_size=2000, compress=true))]
+#[pyo3(signature = (out_dir, hands=10000, seed=1, styles=vec!["fast".to_string(), "high_tai".to_string(), "defensive".to_string(), "balanced".to_string()], random_lineup=true, shard_size=2000, compress=true, games=0))]
 fn run_selfplay(
     py: Python<'_>,
     out_dir: String,
@@ -205,12 +205,13 @@ fn run_selfplay(
     random_lineup: bool,
     shard_size: u64,
     compress: bool,
+    games: u64,
 ) -> PyResult<(u64, usize)> {
     let styles: Vec<Style> = styles
         .iter()
         .map(|s| Style::by_name(s).or_else(|| Style::from_csv(s)).ok_or_else(|| PyValueError::new_err(format!("bad style {}", s))))
         .collect::<PyResult<_>>()?;
-    let cfg = SelfPlayConfig { hands, seed, styles, random_lineup, shard_size, out_dir: PathBuf::from(out_dir), compress };
+    let cfg = SelfPlayConfig { hands, seed, styles, random_lineup, shard_size, out_dir: PathBuf::from(out_dir), compress, games };
     let s = py.allow_threads(|| selfplay::run_selfplay(&cfg)).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     Ok((s.hands, s.decisions))
 }

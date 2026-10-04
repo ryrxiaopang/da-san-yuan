@@ -6,6 +6,8 @@ Writes data/run20k/hands_readable.csv (opens in Excel). The original
 shard_*/hands.csv files are left untouched: the loader and training code use
 those, and they keep the exact seeds needed to replay a hand.
 
+Each hand is labelled by its place in the game, e.g. "Game 1, East round, Dealer 4,
+Repeat 1": the round's fourth dealer, who won the previous hand and stayed on.
 Each player is named by seat wind and play style, e.g. "South (Balanced)":
 the style alone is not enough because two seats can play the same style.
 Seat winds move every hand (the dealer is always East), so the East player
@@ -24,8 +26,12 @@ WINDS = ["East", "South", "West", "North"]
 STYLE_NAMES = {"fast": "Fast", "high_tai": "High-tai", "defensive": "Defensive", "balanced": "Balanced"}
 
 COLUMNS = {
+    "game": "Game",
+    "round": "Round",
+    "dealer_no": "Dealer no.",
+    "repeat": "Repeat",
+    "hig": "Hand in game",
     "hand": "Hand",
-    "round": "Round wind",
     "east": "East player (dealer)",
     "south": "South player",
     "west": "West player",
@@ -67,6 +73,12 @@ def patterns(text: str) -> str:
 
 
 def readable(h: pd.DataFrame) -> pd.DataFrame:
+    h = h.copy()
+    if "game" not in h.columns:  # older runs: dealer passed every hand
+        h["game"] = h.hand_id // 16 + 1
+        h["dealer_no"] = h.hand_id % 4 + 1
+        h["repeat"] = 0
+        h["hand_in_game"] = h.hand_id % 16 + 1
     rows = []
     for r in h.itertuples(index=False):
         dealer = int(r.dealer)
@@ -82,8 +94,13 @@ def readable(h: pd.DataFrame) -> pd.DataFrame:
         else:
             result, winner, thrower = "Won on a discard", label(r.winner), label(r.discarder)
         rows.append({
-            COLUMNS["hand"]: r.hand_id + 1,
-            COLUMNS["round"]: WINDS[int(r.prevailing)],
+            COLUMNS["game"]: r.game,
+            COLUMNS["round"]: f"{WINDS[int(r.prevailing)]} round",
+            COLUMNS["dealer_no"]: r.dealer_no,
+            COLUMNS["repeat"]: r.repeat,
+            COLUMNS["hig"]: r.hand_in_game,
+            COLUMNS["hand"]: f"Game {r.game}, {WINDS[int(r.prevailing)]} round, Dealer {r.dealer_no}"
+                             + (f", Repeat {r.repeat}" if r.repeat else ""),
             COLUMNS["east"]: style(bots[seat_at["East"]]),
             COLUMNS["south"]: style(bots[seat_at["South"]]),
             COLUMNS["west"]: style(bots[seat_at["West"]]),
@@ -113,7 +130,7 @@ def main() -> None:
     if not files:
         sys.exit(f"no shard_*/hands.csv files in {args.run_dir}")
     h = pd.concat((pd.read_csv(f, keep_default_na=False, dtype={"seed": str}) for f in files), ignore_index=True)
-    h = h.sort_values("hand_id")
+    h = h.sort_values("hand_id")  # full-game ids sort by game, then hand
     out = readable(h)
     path = args.out or os.path.join(args.run_dir, "hands_readable.csv")
     out.to_csv(path, index=False, encoding="utf-8-sig")  # utf-8-sig so Excel reads it correctly

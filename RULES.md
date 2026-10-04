@@ -25,6 +25,21 @@ This is the exact ruleset the engine, bots and training data follow. If your tab
 - The hand is a **draw** when 15 live tiles remain (`Config::reserve`). No points change.
 - Minimum **1 tai** to win, maximum **5 tai**.
 
+## A full game (dealer rule)
+
+A full game has four rounds, East, South, West and North; the round's wind is the prevailing wind. Each round, the deal starts with the first dealer and passes counter-clockwise, so every player deals at least once per round.
+
+| What happened in the hand | Next hand |
+|---|---|
+| The dealer won | Same dealer again (a **repeat**) |
+| Draw, and nobody holds a kong | Same dealer again (a repeat) |
+| Draw, and someone holds a kong | Deal passes to the next player |
+| Another player won | Deal passes to the next player |
+
+After the round's fourth dealer passes the deal, the next round wind begins. The game ends when the North round's fourth dealer passes the deal, so a game has at least 16 hands. There is no bonus for repeats; the rule only decides who deals.
+
+**Hand labels.** Every hand is named by its place in the game: *Game 1, East round, Dealer 4, Repeat 1* means the first game, East round, the round's fourth dealer, dealing for the second time in a row. Repeat 0 is left out of the label.
+
 ## Tai
 
 | Pattern | Tai | Notes |
@@ -93,4 +108,6 @@ Unit price doubles per tai: 1, 2, 4, 8, 16 for 1–5 tai.
 
 ## Data-generation conventions (not table rules)
 
-In generated data the dealer rotates every hand and the prevailing wind changes every 4 hands, so all seats and winds appear evenly. Real games keep the dealer after a dealer win; that only matters for match-level play, not single-hand decisions.
+Data is generated as complete games (`dsy selfplay --games N`) under the dealer rule above, with the same four players for a whole game. This makes the data match real play; East appears slightly more often than the other seats because dealers can repeat. The training reward is still each hand's own points, so the dealer rule changes who deals, not what a hand is worth.
+
+The older independent-hands mode (`dsy selfplay --hands N`) passes the deal every hand; its hands are labelled as if games had exactly 16 hands.

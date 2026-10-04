@@ -188,7 +188,8 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
 <div class="wrap">
   <header>
     <h1>Watch the bots play, row by row</h1>
-    <p class="lede">This is one full game, 16 real hands from our 20,000-hand training dataset (East round through North round), replayed move for move by the same engine that made them. It plays on its own; pause any time to read a decision. Each time a bot has to decide, the engine saves one training row: what that player could see, the moves it was allowed, the move it made, and hidden answers used only to train the opponent reader. When the hand ends, the points each player won or lost are added to every row as the reward.</p>
+    <p class="lede">This is Game 1 of our 1,000-game training dataset: a complete game from the East round to the North round, played under the team's rules (the dealer stays on after winning, or after a draw where nobody holds a kong). Every hand is replayed move for move by the same engine that made it. It plays on its own; pause any time to read a decision. Each time a bot has to decide, the engine saves one training row: what that player could see, the moves it was allowed, the move it made, and hidden answers used only to train the opponent reader. When the hand ends, the points each player won or lost are added to every row as the reward.</p>
+    <p class="note">Each button is one hand: round wind and dealer number (1 to 4 within the round). "Repeat" means the dealer won or drew without a kong and dealt again.</p>
     <div class="games" id="games" role="group" aria-label="Choose a hand"></div>
   </header>
 
@@ -206,7 +207,7 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
           <option value="900" selected>Normal</option>
           <option value="400">Fast</option>
         </select>
-        <label class="toggle"><input type="checkbox" id="auto" checked> Keep playing through all 16 hands</label>
+        <label class="toggle"><input type="checkbox" id="auto" checked> Keep playing through the whole game</label>
         <label class="toggle"><input type="checkbox" id="pov"> Show only what the deciding player sees</label>
       </div>
       <div class="below">
@@ -245,6 +246,8 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
   const EN_HONOR = ['East wind', 'South wind', 'West wind', 'North wind', 'White dragon', 'Green dragon', 'Red dragon'];
   const EN_BONUS = ['Spring', 'Summer', 'Autumn', 'Winter', 'Plum', 'Orchid', 'Chrysanthemum', 'Bamboo flower', 'Cat', 'Rat', 'Rooster', 'Centipede'];
 
+  // "Game 1, East round, Dealer 4, Repeat 1": the round's fourth dealer, staying on once.
+  const handLabel = g => `Game ${g.game}, ${['East', 'South', 'West', 'North'][g.prevailing]} round, Dealer ${g.dealer_no}${g.repeat ? `, Repeat ${g.repeat}` : ''}`;
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   function tileName(id) {
@@ -357,7 +360,7 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
     const left = final ? (game.decisions[n - 1].draws_left) : d.draws_left;
     html += `<div class="center">
       <div class="round" aria-label="Round wind ${WINDS[game.prevailing]}">${WIND_CN[game.prevailing]}</div>
-      <div class="meta">${WINDS[game.prevailing]} round &middot; hand ${game.hand_id + 1} of 20,000 &middot; ${left} tiles left to draw</div>
+      <div class="meta">${esc(handLabel(game))} &middot; ${left} tiles left to draw</div>
       <div class="now">${now}</div>
     </div>`;
     $('board').innerHTML = html;
@@ -521,7 +524,7 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
       <section>
         <h2>The same hand in the database</h2>
         <p class="note">One row in <span class="mono">hands</span>, four in <span class="mono">hand_seats</span>, ${n} in <span class="mono">decisions</span>. Query it in pgAdmin:</p>
-        <p class="mono">SELECT * FROM v_hands_readable WHERE run_id = 1 AND "Hand" = ${game.hand_id + 1};</p>
+        <p class="mono">SELECT * FROM v_hands_readable WHERE run_id = (SELECT run_id FROM runs WHERE name = 'games1000') AND "Hand" = '${esc(handLabel(game))}';</p>
       </section>`;
   }
 
@@ -569,12 +572,12 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
     const log = $('log');
     log.innerHTML = events().map(e => `<li class="${e.cls}"><span class="num">${e.num ? '#' + e.num : ''}</span>${e.html}</li>`).join('');
     log.scrollTop = log.scrollHeight;
-    $('logHand').textContent = `Hand ${game.hand_id + 1}`;
+    $('logHand').textContent = handLabel(game);
   }
 
   // ---------- points ----------
-  // Full-dataset totals per style (20,000 hands, from the hand_seats table).
-  const DATASET = { high_tai: [20105, 25146], balanced: [20109, -4914], fast: [19948, -8338], defensive: [19838, -11894] };
+  // Full-dataset totals per style (1,000 games, 23,230 hands, from the hand_seats table).
+  const DATASET = { high_tai: [22092, 30214], balanced: [24056, -2602], fast: [22440, -11326], defensive: [24332, -16286] };
   const finished = new Set();
   function renderScore() {
     const t = {};
@@ -590,7 +593,7 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
     }
     const order = Object.keys(t).sort((a, b) => t[b].net - t[a].net);
     const sign = v => `${v > 0 ? '+' : ''}${v.toLocaleString('en')}`;
-    $('score').innerHTML = `<div class="scroll"><table class="score"><thead><tr><th>Style</th><th>Hands</th><th>Wins</th><th title="Threw the winning tile">Fed</th><th>Net pts</th><th title="Average points per hand across all 20,000 hands">20k avg</th></tr></thead><tbody>` +
+    $('score').innerHTML = `<div class="scroll"><table class="score"><thead><tr><th>Style</th><th>Hands</th><th>Wins</th><th title="Threw the winning tile">Fed</th><th>Net pts</th><th title="Average points per hand across all 1,000 games in the dataset">Dataset avg</th></tr></thead><tbody>` +
       order.map(k => {
         const x = t[k], ds = DATASET[k];
         return `<tr><td>${esc(STYLE[k] || k)}</td><td>${x.hands}</td><td>${x.wins}</td><td>${x.threw}</td>` +
@@ -650,7 +653,7 @@ table.pts td:last-child { text-align: right; font-family: var(--font-data); }
     document.querySelectorAll('.game-btn').forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
     render();
   }
-  $('games').innerHTML = DATA.games.map((g, i) => `<button class="game-btn" aria-pressed="false">Hand ${g.hand_id + 1}<small>${WINDS[g.prevailing]} round, ${short(g)}</small></button>`).join('');
+  $('games').innerHTML = DATA.games.map((g, i) => `<button class="game-btn" aria-pressed="false">${WINDS[g.prevailing]} ${g.dealer_no}${g.repeat ? `, repeat ${g.repeat}` : ''}<small>${short(g)}</small></button>`).join('');
   document.querySelectorAll('.game-btn').forEach((b, i) => b.onclick = () => pick(i));
   pick(0);
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
