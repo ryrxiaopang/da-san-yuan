@@ -111,7 +111,7 @@ Each `shard_XXXXX/` directory holds gzip-compressed numpy arrays (`--no-compress
 
 Seats in `obs` and `oracle` are relative: 0 = you, 1 = next player, 2 = opposite, 3 = previous. Actions: 0–33 discard, 34–67 kong, 68 tsumo, 69 ron, 70 pong, 71 exposed kong, 72–74 chow (claimed tile low/middle/high), 75 pass.
 
-**Line-ups and why styles play different numbers of hands.** By default each seat's style is drawn at random every hand (`random_lineup=true` in `format.txt`). Over 20,000 hands (80,000 seats) the styles therefore get roughly, not exactly, 20,000 seats each; in `run20k` the counts were 19,838 to 20,109, within about 1%, which is ordinary random variation. This is deliberate: varied line-ups (for example three aggressive players against one cautious one) teach the model to handle any mix of opponents. When comparing styles from this data, use average points per hand, never totals, since the average adjusts for the count. For a fair head-to-head comparison use `dsy tournament`, which gives every style the same deals from every seat; for a dataset with exactly equal counts, generate with `--fixed-lineup`.
+**Line-ups and why styles play different numbers of hands.** Styles are drawn at random (`random_lineup=true` in `format.txt`): per hand in hand mode, per game in full-game mode, where the same four players sit through the whole game. Styles therefore get roughly, not exactly, equal numbers of seats: in `games1000` the counts were 22,092 to 24,332 player-hands (within about 5%, because games run 16 to 36 hands long), and in the older `run20k` 19,838 to 20,109. This is deliberate: varied line-ups (for example three aggressive players against one cautious one) teach the model to handle any mix of opponents. When comparing styles from this data, use average points per hand, never totals, since the average adjusts for the count. For a fair head-to-head comparison use `dsy tournament`, which gives every style the same deals from every seat; for a dataset with exactly equal counts, generate with `--fixed-lineup`.
 
 `oracle`, `waits` and `shanten` are the targets for the opponent-reading heads ("is the left player ready, and on what?"). `format.txt` in each dataset records `obs_version` (currently 2); bump it whenever the layout changes.
 
@@ -137,9 +137,44 @@ python db/load_selfplay.py data/games1000               # --replace to reload, -
 psql postgresql://dsy:dsy@localhost:5432/dasanyuan -c "select * from v_style_summary"
 ```
 
-Size guide: 20,000 hands is about 1.2 million decision rows and roughly 300 MB in PostgreSQL. Free hosted tiers (about 0.5 GB) fit hand-level tables comfortably; use `--no-decisions` there.
+Size guide: `games1000` (23,230 hands) is about 1.4 million decision rows and roughly 200 MB inside PostgreSQL, but the export file for both runs together is only about 25 MB (see below). Free hosted tiers (about 0.5 GB) fit hand-level tables comfortably; use `--no-decisions` there.
 
 `notebooks/01_selfplay_eda.ipynb` turns a loaded run into the baseline charts and key findings (set `DSY_RUN` to pick a run). Exported figures are in `notebooks/figures/`.
+
+## Sharing the database with teammates (Windows, Mac, Linux)
+
+The export is one file that works on every operating system. Both people need PostgreSQL; the person loading needs the same major version or newer (PostgreSQL 18 on both is simplest).
+
+**1. Export (on the computer that has the data).** From the repo folder:
+
+```powershell
+# Windows
+powershell -ExecutionPolicy Bypass -File db\export_db.ps1              # everything, about 25 MB
+powershell -ExecutionPolicy Bypass -File db\export_db.ps1 -HandsOnly   # hands only, about 2 MB
+```
+```bash
+# Mac / Linux
+bash db/export_db.sh                 # or: bash db/export_db.sh --hands-only
+```
+
+This writes `dasanyuan.dump`. Send it over Google Drive, OneDrive or Teams. Do not commit it to Git.
+
+**2. Install PostgreSQL on the Mac (once).** Either install [Postgres.app](https://postgresapp.com) (download it, drag it to Applications, open it and click Initialize), or use Homebrew: `brew install postgresql@18` then `brew services start postgresql@18`. pgAdmin for Mac is optional, from pgadmin.org.
+
+**3. Import (on the Mac).** Clone the repo, put the dump file in the repo folder and run:
+
+```bash
+bash db/import_db.sh dasanyuan.dump
+```
+
+The script creates the `dsy` user (password `dsy`) and the `dasanyuan` database if they are missing, then loads the dump and prints the hand count per run. Running it again with a newer dump replaces the old data. On Windows the equivalent is `powershell -ExecutionPolicy Bypass -File db\import_db.ps1 dasanyuan.dump`, which asks once for the `postgres` password chosen at install time.
+
+After that, everyone uses the same connection: `postgresql://dsy:dsy@localhost:5432/dasanyuan`. In pgAdmin, register a server with host `localhost`, port `5432`, user `dsy`, password `dsy`. The notebook and `tools/readable_hands.py` work unchanged.
+
+**Alternatives.**
+
+- *Regenerate instead of copying.* The data is deterministic, so with Rust installed `dsy selfplay --games 1000 --out data/games1000` then `python db/load_selfplay.py data/games1000` produces identical rows on any machine. This takes a few minutes and needs no file transfer.
+- *Share the raw folder.* Zip `data/games1000/` (about 170 MB, including the training shards) and load it with `db/load_selfplay.py`. Use this route when a teammate also needs the `.npy` files for model training.
 
 ## Easy-to-read hand table
 

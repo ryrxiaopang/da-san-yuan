@@ -9,3 +9,4 @@ __pycache__/
 python/dasanyuan/_core*
 *.egg-info/
 .pytest_cache/
+*.dump
