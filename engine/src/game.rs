@@ -521,6 +521,21 @@ impl Game {
         }
     }
 
+    /// In a claim or rob-kong window, forget the answers other seats already gave, so they decide
+    /// again with the tiles they now hold (used when re-dealing hidden tiles for rollouts).
+    pub fn reopen_window(&mut self, seat: u8) {
+        let actor = match self.phase {
+            Phase::Claim { from, .. } | Phase::RobKong { seat: from, .. } => from,
+            _ => return,
+        };
+        for s in 0..4u8 {
+            if s != actor && s != seat {
+                self.responses[s as usize] = None;
+            }
+        }
+        self.skip_trivial_responders(actor);
+    }
+
     /// Auto-pass seats whose only option is Pass so callers only see real decisions.
     fn skip_trivial_responders(&mut self, actor: u8) {
         for i in 1..4u8 {

@@ -125,8 +125,9 @@ Training reads the `.npy` shards directly. For analysis and reporting, hand-leve
 | `hands` | hand | deal seed (replays the hand exactly), dealer, wind, winner, discarder, tai, turns |
 | `hand_seats` | player per hand | bot style, seat wind, points, won, dealt in |
 | `hand_patterns` | tai pattern per win | pattern name, tai |
-| `decisions` | decision | phase, action, tile, legal options, wall count, own shanten, opponents ready, safe / unsafe options, tai the chosen discard gives away |
-| `v_style_summary`, `v_pattern_frequency`, `v_defence` | | ready-made summaries |
+| `decisions` | decision | phase, action, tile, legal options, wall count, own shanten, opponents ready, safe / unsafe options, tai the chosen discard gives away; for claims the tile on offer, who threw it, the set formed (`777z`, `345m`) and a plain-language `move` |
+| `move_values` | evaluated decision | expected points of the move played and of the best move, regret, every move's EV (`dsy evaluate`) |
+| `v_style_summary`, `v_pattern_frequency`, `v_defence`, `v_moves_readable`, `v_move_quality` | | ready-made summaries |
 
 ```bash
 docker compose -f db/docker-compose.yml up -d        # or any PostgreSQL 13+; set DATABASE_URL
@@ -220,6 +221,22 @@ For every hand it rebuilds the wall from the stored seed (its own copy of the sh
 `test_referee.py` plants ten kinds of fault (an illegal move, a tile from nowhere, a wrong score, a tampered seed, a wrong danger label, a missing decision, ...) and checks each is caught. It also scores 19 hand-made hands for patterns too rare to appear in self-play (nine gates, small four winds, ping hu edge cases, ...) three ways: by hand from `RULES.md`, by the referee and by the engine.
 
 What this does and does not show: it shows every hand follows `RULES.md` exactly. It cannot show `RULES.md` matches how your table plays, or that the bots play like people; those need a person who plays to read the rules and watch replays.
+
+## Expected value of every move (`dsy evaluate`)
+
+Final points only say how a whole hand went. To judge single moves, `dsy evaluate` replays games from a run and, at every decision, tries **every legal move** in the same 64 sampled "worlds", playing each to the end of the hand with the bots. A move's expected value (EV) is the player's average final points; **regret** is the best move's EV minus the EV of the move actually played (0 = best move).
+
+```bash
+dsy evaluate --games 1-10 --seed 1 --worlds 64 --out data/games1000/move_values.csv   # seed = the run's seed
+python db/load_move_values.py data/games1000/move_values.csv --run games1000
+```
+
+- **Fair mode (default):** the tiles the player cannot see (opponents' hands and the wall) are re-dealt in every world, so the EV uses only what the player knew. `--oracle` keeps the real hidden tiles instead ("what would actually have happened").
+- All moves share the same worlds and bot seeds, so the difference between two moves is measured much more precisely than each EV alone (`regret_se`).
+- Cost: about 9 minutes per game on 2 cores at 64 worlds; expect roughly 1 to 1.5 minutes per game on a 16-thread desktop. Fewer worlds is faster but noisier (the error grows as 1/sqrt(worlds)).
+- Known bias: re-dealt opponents get random hands, ignoring what their discards suggest, so fair-mode EVs slightly underrate opponents. The RL critic learns this from real play instead.
+
+In SQL, `v_moves_readable` shows every move in plain language with its EV, the best move and the points lost; `v_move_quality` is the per-style, per-situation summary (average points lost, % best or near-best moves, % clear mistakes).
 
 ## Replay viewer
 

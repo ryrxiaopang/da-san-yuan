@@ -84,6 +84,31 @@ CREATE TABLE IF NOT EXISTS decisions (
     FOREIGN KEY (run_id, hand_id) REFERENCES hands ON DELETE CASCADE
 );
 
+-- Claims spelled out (added Oct 2026; reload a run with --replace to fill them).
+ALTER TABLE decisions ADD COLUMN IF NOT EXISTS claim_tile text;      -- tile on offer when reacting to a discard / added kong
+ALTER TABLE decisions ADD COLUMN IF NOT EXISTS claim_from smallint;  -- seat that threw it
+ALTER TABLE decisions ADD COLUMN IF NOT EXISTS meld       text;      -- set formed: '777z' pong, '345m' chow, '2222s' kong
+ALTER TABLE decisions ADD COLUMN IF NOT EXISTS options    text;      -- claims that were possible: 'win, pong, chow'
+ALTER TABLE decisions ADD COLUMN IF NOT EXISTS move       text;      -- plain language, e.g. 'Chow 345m using 4m thrown by Seat 0'
+
+-- Expected points of each move by Monte Carlo rollouts (`dsy evaluate`, db/load_move_values.py).
+CREATE TABLE IF NOT EXISTS move_values (
+    run_id       integer NOT NULL,
+    hand_id      integer NOT NULL,
+    idx          smallint NOT NULL,           -- same numbering as decisions.idx
+    worlds       smallint NOT NULL,           -- sampled worlds per move
+    oracle       boolean NOT NULL,            -- true: real hidden tiles; false: re-dealt (fair)
+    chosen_ev    real NOT NULL,               -- expected points of the move played
+    best_action  smallint NOT NULL,
+    best_move    text NOT NULL,
+    best_ev      real NOT NULL,
+    regret       real NOT NULL,               -- best_ev - chosen_ev (0 = played the best move)
+    regret_se    real NOT NULL,               -- standard error of the regret
+    hand_points  integer NOT NULL,            -- what the player actually scored in the hand
+    all_moves    text NOT NULL,               -- every legal move with its expected points
+    PRIMARY KEY (run_id, hand_id, idx, oracle)
+);
+
 CREATE INDEX IF NOT EXISTS hand_seats_bot_idx    ON hand_seats (run_id, bot);
 CREATE INDEX IF NOT EXISTS hand_patterns_idx     ON hand_patterns (run_id, pattern);
 CREATE INDEX IF NOT EXISTS decisions_bot_idx     ON decisions (run_id, bot, action_type);
@@ -197,3 +222,62 @@ JOIN seats s USING (run_id, hand_id)
 LEFT JOIN pats p USING (run_id, hand_id)
 GROUP BY h.run_id, h.hand_id, h.prevailing, h.winner, h.discarder, h.self_draw,
          h.tai, h.raw_tai, h.turns, p.how, pos.game, pos.dealer_no, pos.repeat_no, pos.hand_in_game;
+
+
+-- Every move in plain language, with the expected value of the move when it has been evaluated.
+DROP VIEW IF EXISTS v_moves_readable;
+CREATE VIEW v_moves_readable AS
+SELECT d.run_id,
+       h.game                                                          AS "Game",
+       h.hand_in_game                                                  AS "Hand in game",
+       (ARRAY['East','South','West','North'])[h.prevailing + 1] || ' round' AS "Round",
+       d.idx + 1                                                       AS "Move no.",
+       'Seat ' || d.seat || ' (' ||
+         (ARRAY['East','South','West','North'])[((d.seat - h.dealer + 4) % 4) + 1] || ')' AS "Player",
+       d.bot                                                           AS "Style",
+       CASE d.phase WHEN 'own_turn' THEN 'Own turn'
+                    WHEN 'claim'    THEN 'Reacting to a discard'
+                    ELSE 'Reacting to an added kong' END               AS "Situation",
+       d.move                                                          AS "Move",
+       d.action_type                                                   AS "Move type",
+       d.claim_tile                                                    AS "Tile on offer",
+       CASE WHEN d.claim_from IS NULL THEN NULL ELSE 'Seat ' || d.claim_from || ' (' ||
+         (ARRAY['East','South','West','North'])[((d.claim_from - h.dealer + 4) % 4) + 1] || ')' END AS "Thrown by",
+       d.meld                                                          AS "Set formed",
+       d.options                                                       AS "Could have",
+       d.draws_left                                                    AS "Tiles left to draw",
+       d.own_shanten                                                   AS "Tiles from ready",
+       d.opp_ready                                                     AS "Opponents ready",
+       d.deal_in_tai                                                   AS "Tai given away",
+       round(v.chosen_ev::numeric, 2)                                  AS "Expected points of move",
+       v.best_move                                                     AS "Best move",
+       round(v.best_ev::numeric, 2)                                    AS "Expected points of best",
+       round(v.regret::numeric, 2)                                     AS "Points lost vs best",
+       v.hand_points                                                   AS "Points scored in hand",
+       d.hand_id
+FROM decisions d
+JOIN hands h USING (run_id, hand_id)
+LEFT JOIN move_values v ON v.run_id = d.run_id AND v.hand_id = d.hand_id AND v.idx = d.idx AND NOT v.oracle;
+
+-- Move quality by style and situation, from evaluated moves (fair mode).
+-- "Best or near-best" = within two standard errors of the best move's expected points.
+DROP VIEW IF EXISTS v_move_quality;
+CREATE VIEW v_move_quality AS
+SELECT d.run_id,
+       d.bot AS style,
+       CASE WHEN d.phase = 'own_turn' AND d.action < 34 AND d.opp_ready > 0 THEN 'discard, an opponent is ready'
+            WHEN d.phase = 'own_turn' AND d.action < 34                     THEN 'discard, nobody ready'
+            WHEN d.phase = 'own_turn' AND d.action = 68                     THEN 'self-drawn win'
+            WHEN d.phase = 'own_turn'                                        THEN 'kong'
+            WHEN d.options LIKE '%win%'                                      THEN 'could win on a discard'
+            WHEN d.options LIKE '%pong%'                                     THEN 'could pong'
+            WHEN d.options LIKE '%chow%'                                     THEN 'could chow'
+            ELSE 'other claim' END                                          AS situation,
+       count(*)                                                             AS moves,
+       round(avg(v.chosen_ev)::numeric, 2)                                  AS avg_expected_points,
+       round(avg(v.regret)::numeric, 2)                                     AS avg_points_lost,
+       round(100.0 * avg((v.regret <= 2 * v.regret_se)::int), 1)            AS pct_best_or_near,
+       round(100.0 * avg((v.regret > 2 * v.regret_se AND v.regret >= 4)::int), 1) AS pct_clear_mistakes
+FROM decisions d
+JOIN move_values v ON v.run_id = d.run_id AND v.hand_id = d.hand_id AND v.idx = d.idx AND NOT v.oracle
+GROUP BY 1, 2, 3;

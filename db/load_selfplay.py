@@ -167,6 +167,8 @@ def decision_table(run_id: int, shard: str, bot_names: dict, obs_len: int) -> pd
     kong = (action >= 34) & (action < 68)
     tile[kong] = TILE_NAMES[action[kong] - 34]
 
+    claim_tile, claim_from, meld, options, move = describe_moves(action, mask, obs[:, :34], m, meta[:, 1])
+
     return pd.DataFrame({
         "run_id": run_id,
         "hand_id": hand_id,
@@ -184,7 +186,72 @@ def decision_table(run_id: int, shard: str, bot_names: dict, obs_len: int) -> pd
         "unsafe_options": only_discards(unsafe, is_discard),
         "safe_options": only_discards(safe, is_discard),
         "deal_in_tai": only_discards(chosen, is_discard),
+        "claim_tile": claim_tile,
+        "claim_from": pd.Series(claim_from, dtype="Int16"),
+        "meld": meld,
+        "options": options,
+        "move": move,
     })
+
+
+SEAT_NAMES = ["Seat 0", "Seat 1", "Seat 2", "Seat 3"]
+
+
+def describe_moves(action, mask, hand, m, seat):
+    """Plain-language description of every move, spelling out pongs, chows and kongs taken from a
+    discard: which tile, from whom, and the set it made. Also lists what else the player could do."""
+    n = len(action)
+    phase = m[:, 5]
+    target = m[:, 6]                      # tile on offer (claim / rob kong) or tile just drawn
+    src_rel = m[:, 7]                     # seat that threw it, relative to the player
+    claim_tile = np.full(n, None, dtype=object)
+    claim_from = np.full(n, None, dtype=object)
+    meld = np.full(n, None, dtype=object)
+    options = np.full(n, None, dtype=object)
+    move = np.empty(n, dtype=object)
+    for i in range(n):
+        a = int(action[i])
+        if phase[i] in (1, 2):            # reacting to a discard / an added kong
+            t = int(target[i])
+            frm = (int(seat[i]) + int(src_rel[i])) % 4
+            tn = TILE_NAMES[t]
+            claim_tile[i], claim_from[i] = tn, frm
+            legal = np.flatnonzero(mask[i])
+            opts = []
+            if 69 in legal: opts.append("win")
+            if 70 in legal: opts.append("pong")
+            if 71 in legal: opts.append("kong")
+            if any(x in legal for x in (72, 73, 74)): opts.append("chow")
+            options[i] = ", ".join(opts)
+            who = SEAT_NAMES[frm]
+            if a == 69:
+                move[i] = (f"Rob the kong: win on {tn} from {who}" if phase[i] == 2 else f"Win on {tn} thrown by {who}")
+            elif a == 70:
+                meld[i] = tn[0] * 3 + tn[1]
+                move[i] = f"Pong {tn} thrown by {who}"
+            elif a == 71:
+                meld[i] = tn[0] * 4 + tn[1]
+                move[i] = f"Kong {tn} thrown by {who}"
+            elif a in (72, 73, 74):
+                low = t - (a - 72)
+                run = [TILE_NAMES[low + k] for k in range(3)]
+                meld[i] = "".join(x[0] for x in run) + tn[1]
+                move[i] = f"Chow {meld[i]} using {tn} thrown by {who}"
+            else:
+                move[i] = f"Pass on {tn} from {who} (could {options[i].replace(', ', ' / ')})"
+        else:
+            if a < 34:
+                move[i] = f"Discard {TILE_NAMES[a]}"
+            elif a < 68:
+                t = a - 34
+                kind = "Concealed kong" if hand[i, t] == 4 else "Added kong (onto own pong)"
+                meld[i] = TILE_NAMES[t][0] * 4 + TILE_NAMES[t][1]
+                move[i] = f"{kind} {TILE_NAMES[t]}"
+            elif a == 68:
+                move[i] = "Self-drawn win"
+            else:
+                move[i] = f"Action {a}"
+    return claim_tile, claim_from, meld, options, move
 
 
 def main() -> None:

@@ -2,6 +2,7 @@
 //! self-play data generation. See RULES.md for the encoded ruleset.
 
 pub mod bots;
+pub mod evaluate;
 pub mod game;
 pub mod obs;
 pub mod rng;

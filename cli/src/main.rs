@@ -132,6 +132,27 @@ enum Cmd {
         #[arg(long, default_value = "replay.json")]
         out: PathBuf,
     },
+    /// Expected points of every legal move at every decision of some full games (Monte Carlo rollouts).
+    Evaluate {
+        /// Games to evaluate, 1-based, e.g. "1-10" or "1,5,9".
+        #[arg(long, default_value = "1")]
+        games: String,
+        /// Seed of the `selfplay --games` run to reproduce.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        #[arg(long, default_value = "fast,high_tai,defensive,balanced")]
+        styles: String,
+        #[arg(long)]
+        fixed_lineup: bool,
+        /// Sampled worlds per move; the error shrinks with the square root (64 is about +-1 point).
+        #[arg(long, default_value_t = 64)]
+        worlds: usize,
+        /// Use the real hidden tiles instead of re-dealing what the player cannot see.
+        #[arg(long)]
+        oracle: bool,
+        #[arg(long, default_value = "move_values.csv")]
+        out: PathBuf,
+    },
     /// Measure engine + bot throughput.
     Bench {
         #[arg(long, default_value_t = 2_000)]
@@ -175,6 +196,87 @@ fn parse_melds(s: &str) -> Vec<Meld> {
             Meld { kind, tile, claimed: None, from: None }
         })
         .collect()
+}
+
+fn parse_game_list(s: &str) -> Vec<u64> {
+    let mut v = Vec::new();
+    for part in s.split(',') {
+        let (a, b) = part.split_once('-').unwrap_or((part, part));
+        let (a, b): (u64, u64) = (a.trim().parse().expect("game number"), b.trim().parse().expect("game number"));
+        v.extend(a..=b);
+    }
+    v
+}
+
+fn move_label(a: dsy_engine::Action) -> String {
+    use dsy_engine::Action::*;
+    match a {
+        Discard(t) => format!("discard {}", tile_name(t)),
+        Kong(t) => format!("kong {}", tile_name(t)),
+        Tsumo => "self-drawn win".into(),
+        Ron => "win on discard".into(),
+        Pong => "pong".into(),
+        ExposedKong => "kong from discard".into(),
+        Chow(p) => format!("chow ({} of the run)", ["low", "middle", "high"][p as usize]),
+        Pass => "pass".into(),
+    }
+}
+
+/// Writes one CSV row per decision: the expected points of the move played, of the best move,
+/// the regret between them, and the expected points of every legal move.
+fn evaluate_games(games: &str, seed: u64, styles: &str, fixed_lineup: bool, worlds: usize, oracle: bool, out: &PathBuf) {
+    use dsy_engine::evaluate::evaluate;
+    use dsy_engine::obs::action_index;
+    let cfg = SelfPlayConfig {
+        hands: 0, seed, styles: parse_styles(styles), random_lineup: !fixed_lineup,
+        shard_size: 100, out_dir: PathBuf::new(), compress: false, games: 0,
+    };
+    let mut f = std::io::BufWriter::new(std::fs::File::create(out).expect("create output"));
+    writeln!(f, "game,hand_id,idx,seat,style,phase,n_legal,chosen_action,chosen_move,chosen_ev,best_action,best_move,best_ev,regret,regret_se,hand_points,all_moves").unwrap();
+    let t0 = Instant::now();
+    let mut n_dec = 0usize;
+    for game_no in parse_game_list(games) {
+        let ids = selfplay::game_lineup(&cfg, game_no - 1);
+        let names: Vec<String> = ids.iter().map(|&i| cfg.styles[i].name.clone()).collect();
+        let lineup: [Style; 4] = std::array::from_fn(|i| cfg.styles[ids[i]].clone());
+        let rows = std::cell::RefCell::new(Vec::<(u64, u8, String)>::new());
+        let idx = std::cell::Cell::new(0usize);
+        selfplay::play_full_game(
+            &cfg,
+            game_no - 1,
+            |g, seat, a, hand_id| {
+                let phase = match g.phase {
+                    dsy_engine::Phase::SelfTurn { .. } => "own_turn",
+                    dsy_engine::Phase::Claim { .. } => "claim",
+                    dsy_engine::Phase::RobKong { .. } => "rob_kong",
+                    dsy_engine::Phase::Over => "over",
+                };
+                let vals = evaluate(g, seat, &lineup, a, worlds, seed ^ hand_id.wrapping_mul(0x9E37) ^ idx.get() as u64, oracle);
+                let chosen = vals.iter().find(|v| v.action == a).unwrap();
+                let best = vals.iter().max_by(|x, y| x.ev.partial_cmp(&y.ev).unwrap()).unwrap();
+                let all: Vec<String> = vals.iter().map(|v| format!("{}:{:+.2}", move_label(v.action), v.ev)).collect();
+                let line = format!(
+                    "{},{},{},{},{},{},{},{},{},{:.3},{},{},{:.3},{:.3},{:.3}",
+                    game_no, hand_id, idx.get(), seat, names[seat as usize], phase, vals.len(),
+                    action_index(a), move_label(a), chosen.ev, action_index(best.action), move_label(best.action),
+                    best.ev, best.ev - chosen.ev, best.se_vs_chosen,
+                );
+                rows.borrow_mut().push((hand_id, seat, format!("{},\"{}\"", line, all.join("; "))));
+                idx.set(idx.get() + 1);
+            },
+            |_, _, _, _, r, _| {
+                for (_, seat, line) in rows.borrow_mut().drain(..) {
+                    let (head, tail) = line.split_once(",\"").unwrap();
+                    writeln!(f, "{},{},\"{}", head, r.deltas[seat as usize], tail).unwrap();
+                    n_dec += 1;
+                }
+                idx.set(0);
+            },
+        );
+        eprintln!("game {}: {} decisions so far, {:.0}s", game_no, n_dec, t0.elapsed().as_secs_f64());
+    }
+    f.flush().unwrap();
+    println!("wrote {} decisions to {} ({:.0}s)", n_dec, out.display(), t0.elapsed().as_secs_f64());
 }
 
 fn print_table(stats: &[selfplay::EntrantStats]) {
@@ -359,6 +461,9 @@ fn main() {
             for (tag, v) in by_tag {
                 println!("{:<30}{}", format!("  [{}]", tag), v.iter().map(|(a, b)| format!("{:>10.0}%", 100.0 * a / *b as f64)).collect::<String>());
             }
+        }
+        Cmd::Evaluate { games, seed, styles, fixed_lineup, worlds, oracle, out } => {
+            evaluate_games(&games, seed, &styles, fixed_lineup, worlds, oracle, &out);
         }
         Cmd::Trace { game, hands, seed, shard_size, styles, fixed_lineup, out } => {
             let cfg = SelfPlayConfig {
