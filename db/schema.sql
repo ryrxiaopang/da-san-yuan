@@ -253,6 +253,7 @@ SELECT d.run_id,
        v.best_move                                                     AS "Best move",
        round(v.best_ev::numeric, 2)                                    AS "Expected points of best",
        round(v.regret::numeric, 2)                                     AS "Points lost vs best",
+       round((2 * v.regret_se)::numeric, 1)                            AS "Margin of error (+-)",
        v.hand_points                                                   AS "Points scored in hand",
        d.hand_id
 FROM decisions d
