@@ -44,10 +44,13 @@ def write_shard(dst, rows, arrays):
             f.write(buf.getvalue())
 
 
+RUN_SEED = 1
+
+
 def problems(rows, arrays, tmp, name):
     d = tmp / name
     write_shard(d, rows, arrays)
-    errors, _, _, _ = referee.check_shard((str(d), 1, True))
+    errors, _, _, _ = referee.check_shard((str(d), RUN_SEED, True))
     return errors
 
 
@@ -133,7 +136,10 @@ def rare_patterns(dsy):
 
 
 def main():
+    global RUN_SEED
     run = Path(sys.argv[1] if len(sys.argv) > 1 else "data/games1000")
+    fmt = dict(l.split("=", 1) for l in (run / "format.txt").read_text().split() if "=" in l)
+    RUN_SEED = int(fmt["seed"])
     rows, arrays = read_shard(run / "shard_00000", 40)
     tmp = Path(tempfile.mkdtemp())
     try:
