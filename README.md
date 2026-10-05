@@ -205,6 +205,22 @@ In PostgreSQL the same table is the view `v_hands_readable` (`SELECT * FROM v_ha
 
 The original `shard_*/hands.csv` files stay as they are: the loader and training read them, and they keep the exact seed for replaying each hand. Don't save `hands.csv` from Excel, which rounds the seeds.
 
+## Checking the data is legitimate (independent referee)
+
+The engine generated the data, so the engine cannot vouch for it. `tools/referee/referee.py` is a second, separate implementation of the rules, written in Python from `RULES.md`. It imports nothing from the engine and reads only the stored dataset:
+
+```bash
+python tools/referee/referee.py data/games1000            # every hand and decision (about 5 min on 16 threads)
+python tools/referee/referee.py data/games1000 --shards 0 # quick spot check, 100 games
+python tools/referee/test_referee.py data/games1000       # proves the referee catches planted faults
+```
+
+For every hand it rebuilds the wall from the stored seed (its own copy of the shuffle) and checks it is a complete 148-tile set, then deals and plays the hand itself. At every recorded decision it checks that the right player was asked, that the legal moves offered are exactly the ones the rules allow, that the move taken is one of them, and that the stored table (hands, melds, discards, bonus tiles, hidden hands, wall count) matches its own, with every tile accounted for once. It recomputes the opponent "waits" labels, scores every win from scratch and checks the payments add to zero. Across each full game it checks the dealer rule, round wind and labels, and across the run that the shuffle is fair (every tile equally likely at every wall position).
+
+`test_referee.py` plants ten kinds of fault (an illegal move, a tile from nowhere, a wrong score, a tampered seed, a wrong danger label, a missing decision, ...) and checks each is caught. It also scores 19 hand-made hands for patterns too rare to appear in self-play (nine gates, small four winds, ping hu edge cases, ...) three ways: by hand from `RULES.md`, by the referee and by the engine.
+
+What this does and does not show: it shows every hand follows `RULES.md` exactly. It cannot show `RULES.md` matches how your table plays, or that the bots play like people; those need a person who plays to read the rules and watch replays.
+
 ## Replay viewer
 
 `web/replay/index.html` plays Game 1 of the 1,000-game dataset on its own, from the East round to the North round with real dealer repeats, with an action log and running points by play style. It replays real hands move by move and shows, for every decision, the training row being recorded: the 672-number snapshot, the allowed moves and the one chosen, the hidden answers used to train the opponent reader, and the points added as the reward when the hand ends. Open it in any browser.

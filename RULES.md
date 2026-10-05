@@ -20,7 +20,7 @@ This is the exact ruleset the engine, bots and training data follow. If your tab
 - Dealer (East) gets 14 tiles, others 13. Bonus tiles are set aside and replaced from the back of the wall, dealer first.
 - A drawn bonus tile is set aside and replaced from the back immediately.
 - Claims on a discard: **win > pong / kong > chow**. Only the next player may chow. If several players can win on the same discard, the one nearest after the discarder wins.
-- Kongs: concealed kong (4 in hand), exposed kong (from a discard, holding 3), added kong (4th tile onto your own pong). Every kong draws a replacement from the back. An added kong can be **robbed** by a player who wins on that tile.
+- Kongs: concealed kong (4 in hand), exposed kong (from a discard, holding 3), added kong (4th tile onto your own pong). Every kong draws a replacement from the back, so a kong cannot be declared once no live tiles are left to draw. An added kong can be **robbed** by a player who wins on that tile.
 - After a pong or chow you must discard straight away.
 - The hand is a **draw** when 15 live tiles remain (`Config::reserve`). No points change.
 - Minimum **1 tai** to win, maximum **5 tai**.
