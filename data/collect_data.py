@@ -1,254 +1,112 @@
 """
-Collect training data: 4 greedy bots play mahjong, and every discard is saved
-as one row in the format train_bc.py expects.
+Collect training data: 4 GreedyBots play hands of Singapore mahjong, and every
+discard is saved as one row in the format ml/train_bc.py expects.
 
-Run it with:   python collect_data.py --games 5000 --out greedy_games.pt
-Then:          python train_bc.py greedy_games.pt
-Needs:         pip install torch
+Run it with:   python data/collect_data.py --games 5000 --out greedy_games.pt
+Then:          python ml/train_bc.py greedy_games.pt
+Needs:         pip install -r requirements.txt
 
-What's real and what's a placeholder:
-  - encode()            REAL. The 48-line grid. Keep it when you swap engines.
-  - save format         REAL. Exactly what train_bc.py reads.
-  - SimpleGame          PLACEHOLDER engine: draw and discard only, self-drawn
-                        wins only, no pong/chow/kong, no bonus tiles, no tai.
-                        Replace with your real Singapore mahjong engine.
-  - GreedyBot           PLACEHOLDER teacher: "throw the tile with the fewest
-                        copies/neighbours". Replace with your shanten-based bot.
+"Games" here means hands: each hand is one game_id. Hands are played one after
+another with the dealer rule (engine.game.TableState), so every seat wind and
+every round wind appears in the data.
+
+What is saved (one row per discard, from the discarding bot's own point of view):
+    game_id  (N,)          which hand the row came from (train/test are split by this)
+    states   (N, 49, 34)   the input grid, float16 (see ml/encode.py)
+    masks    (N, 34)       True where that tile was legal to discard
+    labels   (N,)          the tile GreedyBot discarded, 0-33
+    seat     (N,)          extras for debugging and RL; train_bc.py ignores them
+    turn     (N,)
+    won      (N,)          True if this seat won the hand
+    points   (N,)          points this seat won or lost in the hand
 """
 
 import argparse
-import random
-from dataclasses import dataclass, field
+import os
+import sys
+import time
 
 import torch
 
-NUM_TILE_TYPES = 34      # 0-8 1m..9m, 9-17 1p..9p, 18-26 1s..9s, 27-33 E S W N Rd Gr Wh
-EAST, SOUTH, WEST, NORTH = 27, 28, 29, 30
-SEAT_WINDS = [EAST, SOUTH, WEST, NORTH]       # seat 0 is East (dealer), and so on
-NUM_PLANES = 48
-DEAD_WALL = 15           # placeholder: the hand is a draw when this many tiles are left
+# Let this script find the engine/, bots/ and ml/ folders when run from anywhere.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from bots.greedy_bot import GreedyBot          # noqa: E402
+from engine.game import Game, TableState       # noqa: E402
+from engine.view import view_for               # noqa: E402
+from ml.encode import encode                   # noqa: E402
 
 
-# ===========================================================================
-# What one player is allowed to see. Your real engine should produce this too.
-# Everything is RELATIVE to the player: index 0 = me, 1 = next, 2 = opposite,
-# 3 = previous. No opponent hands, no wall order.
-# ===========================================================================
-@dataclass
-class PlayerView:
-    hand: list                      # my tiles (14 when it's my turn to discard)
-    discards: list                  # 4 lists: discards by me, next, opposite, previous
-    melds: list                     # 4 lists: exposed meld tiles, same order
-    bonus_counts: list              # 4 numbers: flowers/animals revealed, same order
-    last_discard: int | None        # most recent tile thrown by anyone, or None
-    seat_wind: int                  # tile number of my seat wind
-    prevailing_wind: int            # tile number of the round wind
-    wall_left: int                  # tiles left to draw
-
-
-# ===========================================================================
-# REAL: turn a PlayerView into the 48 x 34 grid. The line ORDER must never
-# change once you start collecting, or old and new data won't match.
-# ===========================================================================
-def counts(tiles):
-    c = [0] * NUM_TILE_TYPES
-    for t in tiles:
-        c[t] += 1
-    return c
-
-
-def at_least(c, k):
-    return [1.0 if c[t] >= k else 0.0 for t in range(NUM_TILE_TYPES)]
-
-
-def one_hot(tile):
-    line = [0.0] * NUM_TILE_TYPES
-    if tile is not None:
-        line[tile] = 1.0
-    return line
-
-
-def encode(view: PlayerView):
-    lines = []
-    hand_c = counts(view.hand)
-    lines += [at_least(hand_c, k) for k in (1, 2, 3, 4)]                 # 0-3   hand
-    for d in view.discards:                                              # 4-19  discards x4 players
-        lines += [at_least(counts(d), k) for k in (1, 2, 3, 4)]
-    for m in view.melds:                                                 # 20-35 melds x4 players
-        lines += [at_least(counts(m), k) for k in (1, 2, 3, 4)]
-    seen = view.hand + sum(view.discards, []) + sum(view.melds, [])
-    lines += [at_least(counts(seen), k) for k in (1, 2, 3, 4)]           # 36-39 visible anywhere
-    lines.append(one_hot(view.last_discard))                             # 40    last discard
-    lines.append(one_hot(view.seat_wind))                                # 41    my seat wind
-    lines.append(one_hot(view.prevailing_wind))                          # 42    prevailing wind
-    lines.append([view.wall_left / 136] * NUM_TILE_TYPES)                # 43    wall left
-    for b in view.bonus_counts:                                          # 44-47 bonus tiles x4
-        lines.append([b / 8] * NUM_TILE_TYPES)
-    assert len(lines) == NUM_PLANES
-
-    mask = [hand_c[t] > 0 for t in range(NUM_TILE_TYPES)]                # legal discards
-    return torch.tensor(lines, dtype=torch.float16), torch.tensor(mask)
-
-
-# ===========================================================================
-# PLACEHOLDER teacher. Swap in your shanten-based greedy bot.
-# ===========================================================================
-class GreedyBot:
-    def choose_discard(self, view: PlayerView) -> int:
-        c = counts(view.hand)
-
-        def usefulness(t):
-            score = c[t] - 1                       # other copies
-            if t < 27:                             # suited: neighbours in same suit
-                pos = t % 9
-                if pos > 0:
-                    score += c[t - 1]
-                if pos < 8:
-                    score += c[t + 1]
-            return score
-
-        return min(set(view.hand), key=lambda t: (usefulness(t), t))
-
-
-# ===========================================================================
-# PLACEHOLDER engine. Replace with your real one; keep view_for() returning
-# a PlayerView so encode() keeps working.
-# ===========================================================================
-def is_winning_hand(hand):
-    """Standard win: 4 sets (triplet or run) + 1 pair, 14 tiles."""
-    c = counts(hand)
-
-    def sets_only(c):
-        i = next((t for t in range(NUM_TILE_TYPES) if c[t]), None)
-        if i is None:
-            return True
-        if c[i] >= 3:                                   # try a triplet
-            c[i] -= 3
-            ok = sets_only(c)
-            c[i] += 3
-            if ok:
-                return True
-        if i < 27 and i % 9 <= 6 and c[i + 1] and c[i + 2]:   # try a run
-            for t in (i, i + 1, i + 2):
-                c[t] -= 1
-            ok = sets_only(c)
-            for t in (i, i + 1, i + 2):
-                c[t] += 1
-            if ok:
-                return True
-        return False
-
-    for p in range(NUM_TILE_TYPES):
-        if c[p] >= 2:
-            c[p] -= 2
-            ok = sets_only(c)
-            c[p] += 2
-            if ok:
-                return True
-    return False
-
-
-@dataclass
-class SimpleGame:
-    rng: random.Random
-    hands: list = field(default_factory=list)
-    discards: list = field(default_factory=lambda: [[], [], [], []])
-    wall: list = field(default_factory=list)
-    current: int = 0
-    last_discard: int | None = None
-    winner: int | None = None
-    over: bool = False
-
-    def __post_init__(self):
-        self.wall = [t for t in range(NUM_TILE_TYPES) for _ in range(4)]
-        self.rng.shuffle(self.wall)
-        self.hands = [[self.wall.pop() for _ in range(13)] for _ in range(4)]
-
-    def draw(self):
-        """Current player draws. Returns True if the hand ended (win or draw)."""
-        if len(self.wall) <= DEAD_WALL:
-            self.over = True                         # exhaustive draw, nobody wins
-            return True
-        self.hands[self.current].append(self.wall.pop())
-        if is_winning_hand(self.hands[self.current]):
-            self.winner, self.over = self.current, True
-            return True
-        return False
-
-    def view_for(self, seat):
-        rel = [(seat + k) % 4 for k in range(4)]     # me, next, opposite, previous
-        return PlayerView(
-            hand=list(self.hands[seat]),
-            discards=[list(self.discards[p]) for p in rel],
-            melds=[[] for _ in rel],                 # no claims in the placeholder
-            bonus_counts=[0, 0, 0, 0],               # no bonus tiles in the placeholder
-            last_discard=self.last_discard,
-            seat_wind=SEAT_WINDS[seat],
-            prevailing_wind=EAST,
-            wall_left=len(self.wall),
-        )
-
-    def discard(self, tile):
-        self.hands[self.current].remove(tile)
-        self.discards[self.current].append(tile)
-        self.last_discard = tile
-        self.current = (self.current + 1) % 4       # no claims: always next player
-
-
-# ===========================================================================
-# REAL: the collection loop and save format.
-# ===========================================================================
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--games", type=int, default=5000)
-    parser.add_argument("--out", default="greedy_games.pt")
-    parser.add_argument("--seed", type=int, default=0)
-    args = parser.parse_args()
-
-    rng = random.Random(args.seed)
+def collect(num_games, seed=0, progress_every=500):
+    """Play `num_games` hands and return the rows as a dict of tensors."""
     bots = [GreedyBot() for _ in range(4)]
     rows = {"game_id": [], "seat": [], "turn": [], "states": [], "masks": [], "labels": []}
-    won = []                                         # filled in once each game ends
-    wins = 0
+    won, points = [], []
+    table = TableState()
+    hands_won = 0
+    start = time.time()
 
-    for game_id in range(args.games):
-        game = SimpleGame(rng)
+    for game_id in range(num_games):
+        game = Game(dealer=table.dealer, prevailing=table.prevailing, seed=seed * 10_000_000 + game_id)
         first_row = len(rows["labels"])
-        turn = 0
-        while not game.draw():
-            seat = game.current
-            view = game.view_for(seat)
-            state, mask = encode(view)
-            tile = bots[seat].choose_discard(view)
 
-            rows["game_id"].append(game_id)
-            rows["seat"].append(seat)
-            rows["turn"].append(turn)
-            rows["states"].append(state)
-            rows["masks"].append(mask)
-            rows["labels"].append(tile)
+        while not game.is_over():
+            seat = game.to_act()
+            view = view_for(game, seat)
+            action = bots[seat].choose_action(view)
 
-            game.discard(tile)
-            turn += 1
+            if action.kind == "discard":
+                state, mask = encode(view)
+                # Sanity check: the mask must match the engine's list of legal discards.
+                legal_discards = {a.tile for a in view.legal if a.kind == "discard"}
+                assert legal_discards == {t for t in range(34) if mask[t]}, "mask doesn't match the engine"
+                rows["game_id"].append(game_id)
+                rows["seat"].append(seat)
+                rows["turn"].append(game.turns)
+                rows["states"].append(state)
+                rows["masks"].append(mask)
+                rows["labels"].append(action.tile)
 
-        # Now we know who won; tag this game's rows (useful later for RL/eval).
-        won += [seat == game.winner for seat in rows["seat"][first_row:]]
-        wins += game.winner is not None
-        if (game_id + 1) % 500 == 0:
-            print(f"{game_id + 1:,} games, {len(rows['labels']):,} decisions so far")
+            game.apply(seat, action)
 
-    torch.save({
+        # The hand is over: now we know who won and the points, so tag this hand's rows.
+        result = game.result
+        for seat in rows["seat"][first_row:]:
+            won.append(result.winner == seat)
+            points.append(result.deltas[seat])
+        hands_won += result.winner is not None
+        table.next_hand(result, game.any_kong())
+
+        if (game_id + 1) % progress_every == 0:
+            rate = (game_id + 1) / (time.time() - start)
+            print(f"{game_id + 1:,} hands, {len(rows['labels']):,} discards so far "
+                  f"({rate:.1f} hands/s)", flush=True)
+
+    data = {
         "game_id": torch.tensor(rows["game_id"]),
         "states": torch.stack(rows["states"]),
         "masks": torch.stack(rows["masks"]),
         "labels": torch.tensor(rows["labels"]),
-        # extras: train_bc.py ignores these, but they're handy later
         "seat": torch.tensor(rows["seat"]),
         "turn": torch.tensor(rows["turn"]),
         "won": torch.tensor(won),
-    }, args.out)
-    print(f"Saved {len(rows['labels']):,} decisions from {args.games:,} games to {args.out} "
-          f"({wins / args.games:.0%} of hands ended in a win)")
+        "points": torch.tensor(points),
+    }
+    return data, hands_won
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--games", type=int, default=5000, help="number of hands to play")
+    parser.add_argument("--out", default="greedy_games.pt")
+    parser.add_argument("--seed", type=int, default=0, help="same seed = exactly the same data")
+    args = parser.parse_args()
+
+    data, hands_won = collect(args.games, args.seed)
+    torch.save(data, args.out)
+    size_mb = os.path.getsize(args.out) / 1e6
+    print(f"Saved {len(data['labels']):,} discards from {args.games:,} hands to {args.out} "
+          f"({size_mb:.0f} MB). {hands_won / args.games:.0%} of hands ended in a win.")
 
 
 if __name__ == "__main__":

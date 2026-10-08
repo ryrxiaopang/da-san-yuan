@@ -24,11 +24,9 @@ I'm new to machine learning and still learning Python. When working with me:
 6. **Evaluation** — duplicate mahjong (same shuffled walls, seats rotated),
    measured in average chips per hand vs GreedyBot.
 
-Current status: **stages 1 (engine) and 2 (bots) built and tested** — see
-`engine/` and `bots/`. Stages 3–6 not started. `data/collect_data.py` still
-contains the placeholder engine (`SimpleGame`) and placeholder teacher; stage 3
-switches it to the real engine and `bots/greedy_bot.py`. The old Rust project
-lives on the `old` branch.
+Current status: **stages 1–3 built and tested** (engine, bots, data collection).
+Stage 4 (behavioural cloning) is next: `ml/train_bc.py` is the team's script and
+already loads the new data file. The old Rust project lives on the `old` branch.
 
 ## Decisions already made
 
@@ -74,7 +72,7 @@ Bonus tiles (flowers, animals) are not among the 34; they're counted separately.
 Every per-player feature is ordered **me, next, opposite, previous** — never
 by absolute seat. Seat 0 is East (dealer).
 
-### Input grid: 49 lines × 34 tiles (built by `encode()` in `collect_data.py`)
+### Input grid: 49 lines × 34 tiles (built by `encode()` in `ml/encode.py`)
 | Lines | Feature |
 |---|---|
 | 0–3 | My hand: have ≥1, ≥2, ≥3, 4 copies |
@@ -98,7 +96,7 @@ saved models depend on it. Add new features only at the end, and re-collect.
 | `states` | (N, 49, 34) float16 | the grid above |
 | `masks` | (N, 34) bool | legal discards |
 | `labels` | (N,) int 0–33 | tile the bot discarded |
-| `seat`, `turn`, `won` | (N,) | extras for debugging / RL; ignored by BC |
+| `seat`, `turn`, `won`, `points` | (N,) | extras for debugging / RL; ignored by BC. `points` = what that seat won or lost in the hand |
 
 One row per discard, from all 4 bots, each from that bot's own point of view.
 
@@ -129,7 +127,9 @@ One row per discard, from all 4 bots, each from that bot's own point of view.
 | `bots/greedy_bot.py` | `GreedyBot`: the teacher, rules under "GreedyBot details" above. |
 | `tools/play_bots.py` | Bots play each other; prints points per hand, wins, deal-ins, tai. |
 | `tools/crosscheck_old_data.py` | One-off check that the engine (and shanten, with `--shanten`) matches the old Rust engine on its recorded games. |
-| `data/collect_data.py` | Bots play, every discard saved. `SimpleGame` and `GreedyBot` are placeholders until stage 3; `encode()` moves to 49 lines then. |
+| `ml/encode.py` | `encode(view)`: the 49 × 34 input grid and the legal-discard mask. |
+| `data/collect_data.py` | 4 GreedyBots play hands with the real engine; every discard saved as a row. |
+| `ml/test_encode.py` | Checks every grid line, no hidden information, and that the data file loads in `train_bc.py`. |
 | `ml/train_bc.py` | Behavioral cloning. Loads the data file, splits by game, trains `DiscardNet`, saves the best model by test accuracy. |
 | `bc_model.pt` | Saved BC weights: `{"state_dict", "num_planes"}`. Loaded by the RL stage. |
 
@@ -138,7 +138,7 @@ Layout (planned parts marked *):
 engine/   tiles.py, game.py, scoring.py, shanten.py, view.py, test_*.py
 bots/     random_bot.py, greedy_bot.py, test_bots.py
 data/     collect_data.py
-ml/       encode.py*, model.py*, train_bc.py, train_ppo.py*
+ml/       encode.py, model.py*, train_bc.py, train_ppo.py*, test_encode.py
 tools/    crosscheck_old_data.py, play_bots.py
 evaluate.py*
 ```
@@ -147,13 +147,14 @@ evaluate.py*
 
 ```bash
 pip install -r requirements.txt
-python -m pytest engine bots -q                 # all tests (about 1 minute)
+python -m pytest engine bots ml -q              # all tests (about 1 minute)
 python tools/play_bots.py --hands 1000 --bots greedy,greedy,random,random
 python data/collect_data.py --games 5000 --out greedy_games.pt
 python ml/train_bc.py greedy_games.pt --epochs 20
 ```
 
-Data size: about 3 KB per decision, so 5,000 games ≈ 1 GB.
+Data size: about 3.4 KB per discard and about 42 discards per hand, so 5,000 hands ≈ 725 MB
+(about 10 minutes to collect on one core).
 
 ## Glossary
 
@@ -161,7 +162,7 @@ Data size: about 3 KB per decision, so 5,000 games ≈ 1 GB.
 - **Supervised learning:** every example comes with the correct answer (label).
 - **RL / PPO:** learning from rewards (chips) instead of answers; PPO is the algorithm.
 - **Agent / environment:** the network / the engine plus the other three players.
-- **State / observation:** the full game vs. what one seat can see (the 48×34 grid).
+- **State / observation:** the full game vs. what one seat can see (the 49×34 grid).
 - **Mask:** marks legal actions; illegal ones get probability 0.
 - **Adam:** the optimizer that adjusts weights; `lr` is its step size.
 - **Shanten:** number of tiles away from a ready hand.
