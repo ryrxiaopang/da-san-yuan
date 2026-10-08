@@ -60,3 +60,53 @@ def test_training_end_to_end(tmp_path):
                     "--epochs", "1", "--out", str(model)], check=True, capture_output=True, cwd=tmp_path)
     bot = NetworkBot(str(model))
     assert bot.model is not None
+
+
+def _without_cross_suit_paths(model):
+    """Switch off the two parts that share information across the whole hand on purpose
+    (the table input and the per-block hand summary), leaving only the convolutions."""
+    with torch.no_grad():
+        model.table_in.weight.zero_(); model.table_in.bias.zero_()
+        for block in model.blocks:
+            block.summary.weight.zero_(); block.summary.bias.zero_()
+    return model
+
+
+def test_resnet_window_never_crosses_suits_or_honours():
+    from ml.model import DiscardResNet
+    torch.manual_seed(0)
+    model = _without_cross_suit_paths(DiscardResNet(NUM_PLANES))
+    mask = torch.ones(1, 34, dtype=torch.bool)
+    x = torch.rand(1, NUM_PLANES, 34)
+    y = x.clone()
+    y[:, :, 8] += 1.0                                     # change only 9m
+    a, b = model(x, mask), model(y, mask)
+    changed = (a - b).abs()[0] > 1e-6
+    assert changed[0:9].any()                             # characters may change ...
+    assert not changed[9:].any()                          # ... but no dots, bamboo or honour score may
+    z = x.clone()
+    z[:, :, 27] += 1.0                                    # change only East
+    changed = (model(x, mask) - model(z, mask)).abs()[0] > 1e-6
+    assert changed.tolist() == [t == 27 for t in range(34)]   # only East's own score moves
+
+
+def test_resnet_shares_its_window_across_suits():
+    """The same 1x3 window is used for every suit: swapping two suits swaps their scores."""
+    from ml.model import DiscardResNet
+    torch.manual_seed(0)
+    model = DiscardResNet(NUM_PLANES)
+    with torch.no_grad():
+        model.table_in.weight.zero_(); model.table_in.bias.zero_()
+    x = torch.rand(2, NUM_PLANES, 34)
+    y = x.clone()
+    y[:, :, 0:9], y[:, :, 9:18] = x[:, :, 9:18], x[:, :, 0:9]
+    mask = torch.ones(2, 34, dtype=torch.bool)
+    a, b = model(x, mask), model(y, mask)
+    assert torch.allclose(a[:, 0:9], b[:, 9:18], atol=1e-5) and torch.allclose(a[:, 9:18], b[:, 0:9], atol=1e-5)
+
+
+def test_models_stay_small_enough_for_the_website():
+    from ml.model import build_model
+    for name in ("mlp", "resnet"):
+        size = sum(p.numel() for p in build_model(name, NUM_PLANES).parameters())
+        assert size < 2_000_000, f"{name} has {size:,} weights"

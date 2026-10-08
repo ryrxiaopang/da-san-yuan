@@ -25,10 +25,11 @@ I'm new to machine learning and still learning Python. When working with me:
    measured in average chips per hand vs GreedyBot.
 
 Current status: **stages 1–3 built and tested** (engine, bots, data collection).
-Stage 4 (behavioural cloning) in progress: the MLP baseline is trained and measured
-(5,000 hands: 61% test accuracy, plateaus after ~7 epochs; at the table it matches
-GreedyBot 51% of the time and loses ~1.9 points/hand). Next: the convolutional
-model, compared on the same test split. The old Rust project lives on the `old` branch.
+Stage 4 (behavioural cloning): both models trained on the same 5,000 hands and
+the same test split. MLP: 61.3% test accuracy (best epoch 9, then overfits),
+51% agreement at the table. ResNet: 95.5% test accuracy (still improving at epoch
+19), 94.9% agreement at the table, points level with GreedyBot. ResNet kept.
+Next: confirm on the GPU with more hands (15,000+), then stage 5. The old Rust project lives on the `old` branch.
 
 ## Decisions already made
 
@@ -44,6 +45,20 @@ model, compared on the same test split. The old Rust project lives on the `old` 
 - **Model:** start with a simple MLP (`DiscardNet`). Switch to a 1-D/2-D
   convolutional ResNet over the 4×9 suit layout only when training on real
   engine data and BC accuracy plateaus. Compare both on the same test split.
+- **Convolutional model (`DiscardResNet`):** the 27 suited tiles become 3 rows of 9;
+  a 1×3 window slides inside each row only (never 9m→1p) and is shared by all
+  suits. Honours get a 1×1 kernel in their own branch (East and South are not
+  neighbours). Table-wide lines (winds, wall, bonus, dealer) reach every tile
+  through a flattened input, and each block adds a whole-hand summary.
+- **No BatchNorm.** Neither network uses it, so behaviour is identical in training
+  and play mode (RL-safe). If normalisation is ever needed, use LayerNorm.
+- **Size limit:** the model must stay small for the web demo — a few million
+  weights at most (tested: under 2 million).
+- **Discard order (GRU/transformer): not now.** Only consider it during RL if
+  defence turns out to be the weak spot.
+- **Comparing models:** same games, same test split, and two numbers — test
+  accuracy and agreement with GreedyBot at the table. A bigger model is only kept
+  if it clearly beats the simpler one on both. Always keep "save the best epoch".
 - **No human game data.** All training data comes from bots.
 - **Rules:** RULES.md is the rulebook (min 1 tai, max 5, payment table, draw at
   15 live tiles, no instant kong/animal payments).
@@ -128,11 +143,12 @@ One row per discard, from all 4 bots, each from that bot's own point of view.
 | `bots/random_bot.py` | `RandomBot`: wins when it can, otherwise random legal moves. Lowest benchmark. |
 | `bots/greedy_bot.py` | `GreedyBot`: the teacher, rules under "GreedyBot details" above. |
 | `tools/play_bots.py` | Bots play each other; prints points per hand, wins, deal-ins, tai. |
+| `tools/merge_data.py` | Combine data files (renumbers game_id so the split by game stays honest). |
 | `tools/crosscheck_old_data.py` | One-off check that the engine (and shanten, with `--shanten`) matches the old Rust engine on its recorded games. |
 | `ml/encode.py` | `encode(view)`: the 49 × 34 input grid and the legal-discard mask. |
 | `data/collect_data.py` | 4 GreedyBots play hands with the real engine; every discard saved as a row. |
 | `ml/test_encode.py` | Checks every grid line, no hidden information, and that the data file loads in `train_bc.py`. |
-| `ml/model.py` | The networks (`DiscardNet`, the MLP). Training, bots and RL all import from here. |
+| `ml/model.py` | The networks: `DiscardNet` ("mlp") and `DiscardResNet` ("resnet"). Training, bots and RL all import from here. |
 | `ml/train_bc.py` | Behavioral cloning. Loads the data file, splits by game, trains `DiscardNet`, saves the best model by test accuracy. |
 | `bots/network_bot.py` | `NetworkBot`: a trained model chooses discards; wins/kongs/claims follow GreedyBot's rules. Reports how often it matches GreedyBot. |
 | `ml/test_model.py` | Network masking, NetworkBot legality, and a tiny end-to-end training run. |
@@ -144,7 +160,7 @@ engine/   tiles.py, game.py, scoring.py, shanten.py, view.py, test_*.py
 bots/     random_bot.py, greedy_bot.py, network_bot.py, test_bots.py
 data/     collect_data.py
 ml/       encode.py, model.py, train_bc.py, train_ppo.py*, test_encode.py, test_model.py
-tools/    crosscheck_old_data.py, play_bots.py
+tools/    crosscheck_old_data.py, play_bots.py, merge_data.py
 evaluate.py*
 ```
 
@@ -155,7 +171,7 @@ pip install -r requirements.txt
 python -m pytest engine bots ml -q              # all tests (about 1 minute)
 python tools/play_bots.py --hands 1000 --bots greedy,greedy,random,random
 python data/collect_data.py --games 5000 --out greedy_games.pt
-python ml/train_bc.py greedy_games.pt --epochs 20
+python ml/train_bc.py greedy_games.pt --epochs 20 --model mlp      # or --model resnet
 python tools/play_bots.py --hands 400 --bots greedy,greedy,greedy,net --model bc_model.pt
 ```
 

@@ -118,3 +118,18 @@ def test_collected_data(tmp_path):
     from train_bc import load_data
     states, masks, labels, game_id = load_data(str(path))
     assert states.shape[1] == NUM_PLANES
+
+
+def test_packing_in_blocks_changes_nothing():
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
+    import collect_data
+
+    normal, _ = collect_data.collect(num_games=15, seed=3, progress_every=10**9)
+    saved = collect_data.CHUNK
+    collect_data.CHUNK = 100                                   # force many small blocks
+    try:
+        packed, _ = collect_data.collect(num_games=15, seed=3, progress_every=10**9)
+    finally:
+        collect_data.CHUNK = saved
+    for key in normal:
+        assert torch.equal(normal[key], packed[key]), key

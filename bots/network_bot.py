@@ -16,7 +16,7 @@ import torch
 from bots.greedy_bot import GreedyBot
 from engine.game import Action
 from ml.encode import encode
-from ml.model import DiscardNet
+from ml.model import build_model
 
 
 class NetworkBot:
@@ -24,7 +24,8 @@ class NetworkBot:
 
     def __init__(self, model_path, device="cpu"):
         checkpoint = torch.load(model_path, map_location=device)
-        self.model = DiscardNet(checkpoint["num_planes"])
+        # Older checkpoints don't say which network they are; those are all the MLP.
+        self.model = build_model(checkpoint.get("model_type", "mlp"), checkpoint["num_planes"])
         self.model.load_state_dict(checkpoint["state_dict"])
         self.model.eval()                      # switch off training-only behaviour
         self.device = device

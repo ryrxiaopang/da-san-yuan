@@ -69,7 +69,7 @@ class Score:
 # --------------------------------------------------------------------------
 # Hand shapes
 # --------------------------------------------------------------------------
-@lru_cache(maxsize=1_000_000)
+@lru_cache(maxsize=200_000)
 def _all_sets(counts):
     """Can these tiles (a tuple of 34 counts) be split completely into pongs and chows?"""
     first = next((t for t in range(NUM_TILE_TYPES) if counts[t] > 0), None)

@@ -36,7 +36,7 @@ import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from ml.model import DiscardNet  # noqa: E402
+from ml.model import MODELS, build_model  # noqa: E402
 
 NUM_TILE_TYPES = 34
 TILE_NAMES = (
@@ -92,7 +92,8 @@ def split_by_game(states, masks, labels, game_id, test_fraction, seed=0):
 # ---------------------------------------------------------------------------
 # Step 2: the neural network
 # ---------------------------------------------------------------------------
-# DiscardNet now lives in ml/model.py, so the bots and the RL stage use the same network.
+# The networks live in ml/model.py (DiscardNet = "mlp", DiscardResNet = "resnet"),
+# so the bots and the RL stage use exactly the same network.
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +123,8 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--test-fraction", type=float, default=0.1)
     parser.add_argument("--out", default="bc_model.pt")
+    parser.add_argument("--model", default="mlp", choices=sorted(MODELS),
+                        help="mlp (DiscardNet) or resnet (DiscardResNet)")
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -134,7 +137,8 @@ def main():
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=1024)
 
-    model = DiscardNet(num_planes).to(device)
+    model = build_model(args.model, num_planes).to(device)
+    print(f"Model: {args.model}, {sum(p.numel() for p in model.parameters()):,} weights, on {device}")
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = nn.CrossEntropyLoss()
 
@@ -155,7 +159,8 @@ def main():
         if top1 > best_top1:
             # Keep the best version seen so far, judged on the held-out games.
             best_top1 = top1
-            torch.save({"state_dict": model.state_dict(), "num_planes": num_planes},
+            torch.save({"state_dict": model.state_dict(), "num_planes": num_planes,
+                        "model_type": args.model},
                        args.out)
             note = "  <- saved"
         print(f"epoch {epoch:2d}  loss {total_loss / len(train_loader):.3f}  "

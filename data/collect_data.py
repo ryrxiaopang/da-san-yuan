@@ -37,10 +37,14 @@ from engine.view import view_for               # noqa: E402
 from ml.encode import encode                   # noqa: E402
 
 
+CHUNK = 20_000   # pack grids into blocks this size as we go, to keep memory use down
+
+
 def collect(num_games, seed=0, progress_every=500):
     """Play `num_games` hands and return the rows as a dict of tensors."""
     bots = [GreedyBot() for _ in range(4)]
     rows = {"game_id": [], "seat": [], "turn": [], "states": [], "masks": [], "labels": []}
+    packed_states, packed_masks = [], []     # finished blocks of CHUNK rows
     won, points = [], []
     table = TableState()
     hands_won = 0
@@ -69,6 +73,13 @@ def collect(num_games, seed=0, progress_every=500):
 
             game.apply(seat, action)
 
+        # Thousands of separate small tensors use much more memory than one block,
+        # so every CHUNK rows the grids are packed into a single tensor.
+        if len(rows["states"]) >= CHUNK:
+            packed_states.append(torch.stack(rows["states"]))
+            packed_masks.append(torch.stack(rows["masks"]))
+            rows["states"], rows["masks"] = [], []
+
         # The hand is over: now we know who won and the points, so tag this hand's rows.
         result = game.result
         for seat in rows["seat"][first_row:]:
@@ -82,10 +93,13 @@ def collect(num_games, seed=0, progress_every=500):
             print(f"{game_id + 1:,} hands, {len(rows['labels']):,} discards so far "
                   f"({rate:.1f} hands/s)", flush=True)
 
+    if rows["states"]:
+        packed_states.append(torch.stack(rows["states"]))
+        packed_masks.append(torch.stack(rows["masks"]))
     data = {
         "game_id": torch.tensor(rows["game_id"]),
-        "states": torch.stack(rows["states"]),
-        "masks": torch.stack(rows["masks"]),
+        "states": torch.cat(packed_states),
+        "masks": torch.cat(packed_masks),
         "labels": torch.tensor(rows["labels"]),
         "seat": torch.tensor(rows["seat"]),
         "turn": torch.tensor(rows["turn"]),

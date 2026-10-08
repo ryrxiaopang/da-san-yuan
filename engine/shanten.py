@@ -120,7 +120,9 @@ def orphans_shanten(counts):
     return 13 - kinds - (1 if has_pair else 0)
 
 
-@lru_cache(maxsize=1_000_000)
+# Remembers recent answers. Kept fairly small: most hands are never seen twice, and a
+# million entries would use about 1 GB of memory.
+@lru_cache(maxsize=100_000)
 def _shanten_cached(counts, n_melds):
     s = standard_shanten(counts, 4 - n_melds)
     if n_melds == 0:
