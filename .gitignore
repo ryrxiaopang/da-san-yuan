@@ -12,3 +12,4 @@ __pycache__/
 *.egg-info/
 # Old Rust build output, if you still have it locally
 /target
+/data/*.csv
