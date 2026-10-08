@@ -2,8 +2,8 @@
 Behavioral cloning for Singapore mahjong discards, trained on games recorded
 from your 4 greedy bots.
 
-Run it with:   python train_bc.py greedy_games.pt
-Options:       python train_bc.py greedy_games.pt --epochs 20 --test-fraction 0.1
+Run it with:   python ml/train_bc.py greedy_games.pt
+Options:       python ml/train_bc.py greedy_games.pt --epochs 20 --test-fraction 0.1
 Needs:         pip install torch
 
 ---------------------------------------------------------------------------
@@ -27,11 +27,16 @@ Tile numbering: 0-8 = 1m..9m, 9-17 = 1p..9p, 18-26 = 1s..9s,
 """
 
 import argparse
+import os
 import random
+import sys
 
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ml.model import DiscardNet  # noqa: E402
 
 NUM_TILE_TYPES = 34
 TILE_NAMES = (
@@ -87,27 +92,7 @@ def split_by_game(states, masks, labels, game_id, test_fraction, seed=0):
 # ---------------------------------------------------------------------------
 # Step 2: the neural network
 # ---------------------------------------------------------------------------
-class DiscardNet(nn.Module):
-    """
-    Input:  game state [batch, P, 34]
-    Output: one score ("logit") per tile type [batch, 34]
-    """
-
-    def __init__(self, num_planes):
-        super().__init__()
-        self.layers = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(num_planes * NUM_TILE_TYPES, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, NUM_TILE_TYPES),
-        )
-
-    def forward(self, state, legal_mask):
-        logits = self.layers(state)
-        # Action masking: tiles you can't discard get probability ~0.
-        return logits.masked_fill(~legal_mask, -1e9)
+# DiscardNet now lives in ml/model.py, so the bots and the RL stage use the same network.
 
 
 # ---------------------------------------------------------------------------

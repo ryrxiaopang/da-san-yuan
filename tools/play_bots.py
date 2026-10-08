@@ -19,12 +19,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from bots.greedy_bot import GreedyBot                      # noqa: E402
+from bots.network_bot import NetworkBot                    # noqa: E402
 from bots.random_bot import RandomBot                      # noqa: E402
 from engine.game import WIN, Game, TableState               # noqa: E402
 from engine.scoring import is_winning_shape                # noqa: E402
 from engine.view import view_for                           # noqa: E402
 
-BOTS = {"greedy": lambda seed: GreedyBot(), "random": lambda seed: RandomBot(seed)}
+
+def make_bot(name, seed, model_path):
+    if name == "greedy":
+        return GreedyBot()
+    if name == "random":
+        return RandomBot(seed)
+    if name == "net":
+        return NetworkBot(model_path)
+    raise ValueError(f"unknown bot {name!r} (use greedy, random or net)")
 
 
 def complete_but_no_tai(view):
@@ -45,13 +54,14 @@ def complete_but_no_tai(view):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hands", type=int, default=1000)
-    ap.add_argument("--bots", default="greedy,greedy,greedy,greedy", help="4 names: greedy or random")
+    ap.add_argument("--bots", default="greedy,greedy,greedy,greedy", help="4 names: greedy, random or net")
+    ap.add_argument("--model", default="bc_model.pt", help="trained network for 'net' seats")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
     names = args.bots.split(",")
     assert len(names) == 4, "give exactly 4 bots"
-    bots = [BOTS[n](args.seed + i) for i, n in enumerate(names)]
+    bots = [make_bot(n, args.seed + i, args.model) for i, n in enumerate(names)]
 
     points = [[] for _ in range(4)]
     wins, deal_ins, tai_sum, blocked = [0] * 4, [0] * 4, [0] * 4, [0] * 4
@@ -91,6 +101,10 @@ def main():
         avg_tai = tai_sum[s] / wins[s] if wins[s] else 0
         print(f"{s:<5}{names[s]:<8}{mean:>+9.2f} ± {sd / math.sqrt(n):<4.2f}{wins[s] / n:>8.1%}"
               f"{deal_ins[s] / n:>10.1%}{avg_tai:>9.2f}{blocked[s] / n:>29.1%} of hands")
+    for s in range(4):
+        if isinstance(bots[s], NetworkBot):
+            print(f"\nseat {s} (net): threw the same tile as GreedyBot would have in "
+                  f"{bots[s].agreement():.1%} of {bots[s].discards:,} discards")
 
 
 if __name__ == "__main__":

@@ -25,8 +25,10 @@ I'm new to machine learning and still learning Python. When working with me:
    measured in average chips per hand vs GreedyBot.
 
 Current status: **stages 1–3 built and tested** (engine, bots, data collection).
-Stage 4 (behavioural cloning) is next: `ml/train_bc.py` is the team's script and
-already loads the new data file. The old Rust project lives on the `old` branch.
+Stage 4 (behavioural cloning) in progress: the MLP baseline is trained and measured
+(5,000 hands: 61% test accuracy, plateaus after ~7 epochs; at the table it matches
+GreedyBot 51% of the time and loses ~1.9 points/hand). Next: the convolutional
+model, compared on the same test split. The old Rust project lives on the `old` branch.
 
 ## Decisions already made
 
@@ -130,15 +132,18 @@ One row per discard, from all 4 bots, each from that bot's own point of view.
 | `ml/encode.py` | `encode(view)`: the 49 × 34 input grid and the legal-discard mask. |
 | `data/collect_data.py` | 4 GreedyBots play hands with the real engine; every discard saved as a row. |
 | `ml/test_encode.py` | Checks every grid line, no hidden information, and that the data file loads in `train_bc.py`. |
+| `ml/model.py` | The networks (`DiscardNet`, the MLP). Training, bots and RL all import from here. |
 | `ml/train_bc.py` | Behavioral cloning. Loads the data file, splits by game, trains `DiscardNet`, saves the best model by test accuracy. |
+| `bots/network_bot.py` | `NetworkBot`: a trained model chooses discards; wins/kongs/claims follow GreedyBot's rules. Reports how often it matches GreedyBot. |
+| `ml/test_model.py` | Network masking, NetworkBot legality, and a tiny end-to-end training run. |
 | `bc_model.pt` | Saved BC weights: `{"state_dict", "num_planes"}`. Loaded by the RL stage. |
 
 Layout (planned parts marked *):
 ```
 engine/   tiles.py, game.py, scoring.py, shanten.py, view.py, test_*.py
-bots/     random_bot.py, greedy_bot.py, test_bots.py
+bots/     random_bot.py, greedy_bot.py, network_bot.py, test_bots.py
 data/     collect_data.py
-ml/       encode.py, model.py*, train_bc.py, train_ppo.py*, test_encode.py
+ml/       encode.py, model.py, train_bc.py, train_ppo.py*, test_encode.py, test_model.py
 tools/    crosscheck_old_data.py, play_bots.py
 evaluate.py*
 ```
@@ -151,6 +156,7 @@ python -m pytest engine bots ml -q              # all tests (about 1 minute)
 python tools/play_bots.py --hands 1000 --bots greedy,greedy,random,random
 python data/collect_data.py --games 5000 --out greedy_games.pt
 python ml/train_bc.py greedy_games.pt --epochs 20
+python tools/play_bots.py --hands 400 --bots greedy,greedy,greedy,net --model bc_model.pt
 ```
 
 Data size: about 3.4 KB per discard and about 42 discards per hand, so 5,000 hands ≈ 725 MB
