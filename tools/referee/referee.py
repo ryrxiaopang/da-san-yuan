@@ -4,7 +4,7 @@
     python tools/referee/referee.py data/games1000 --shards 0-2    # quicker spot check
     python tools/referee/referee.py data/games1000 --no-waits      # skip the (slow) danger-label check
 
-Why this exists: the Rust engine generated the data, so the engine cannot be the one to vouch for it.
+Why this exists: the engine generated the data, so the engine cannot be the one to vouch for it.
 This file is a second, separate implementation written from RULES.md. It imports nothing from the
 engine. It reads only the stored dataset (hands.csv, action, mask, meta, obs, oracle, waits) and:
 

@@ -1,6 +1,6 @@
 # Rules encoded in the engine
 
-This is the exact ruleset the engine, bots and training data follow. If your table plays differently, change the rule here **and** the matching test in `engine/tests/rules.rs`, then regenerate any data.
+This is the exact ruleset the engine, bots and training data follow. If your table plays differently, change the rule here **and** the matching test in `python/tests/test_rules.py`, then regenerate any data.
 
 ## Tiles (148)
 

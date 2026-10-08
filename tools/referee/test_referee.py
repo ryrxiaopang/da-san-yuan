@@ -8,6 +8,7 @@ each (an illegal move, a tile from nowhere, a wrong score, ...) and expects the 
 
 import csv
 import gzip
+import importlib.util
 import io
 import shutil
 import sys
@@ -125,7 +126,7 @@ def rare_patterns(dsy):
         ref = v[0] if v and v[0] >= 1 else 0
         eng = None
         if dsy:
-            cmd = [dsy, "score", hand, "--win", win, "--melds", melds, "--seat", str(seat), "--prevailing", str(prev)]
+            cmd = dsy + ["score", hand, "--win", win, "--melds", melds, "--seat", str(seat), "--prevailing", str(prev)]
             out = subprocess.run(cmd + (["--tsumo"] if tsumo else []), capture_output=True, text=True).stdout
             m = re.search(r"Total: (\d+) tai", out)
             eng = int(m.group(1)) if m else 0
@@ -198,7 +199,7 @@ def main():
                  wrong_winner, tampered_seed, wrong_danger_label, dropped_decision]
         results = [fault(t.__name__.replace("_", " "), t) for t in tests]
         print(f"{sum(results)}/{len(results)} planted faults caught")
-        dsy = next((str(p) for p in (Path("target/release/dsy"), Path("target/release/dsy.exe")) if p.exists()), None)
+        dsy = [sys.executable, "-m", "dasanyuan"] if importlib.util.find_spec("dasanyuan") else None
         print("\nRare patterns, scored by hand from RULES.md, by the referee and by the engine:")
         rare_ok = rare_patterns(dsy)
         sys.exit(0 if all(results) and rare_ok else 1)

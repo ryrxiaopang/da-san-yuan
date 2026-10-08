@@ -31,7 +31,7 @@ import psycopg
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB = "postgresql://dsy:dsy@localhost:5432/dasanyuan"
 SUPPORTED_OBS_VERSIONS = {2}
-META_LEN = 14  # trailing meta block of each observation (engine/src/obs.rs)
+META_LEN = 14  # trailing meta block of each observation (python/dasanyuan/obs.py)
 
 ACTION_TYPES = np.array(
     ["discard"] * 34 + ["kong"] * 34

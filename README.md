@@ -2,7 +2,7 @@
 
 Singapore 4-player mahjong engine, heuristic bots and self-play data generator. It is the foundation for a learning platform that advises players on the best move and explains why.
 
-This repo currently contains **stage 1 of the training pipeline**: a fast, tested rules engine, four heuristic bots, a self-play logger that writes training data with exact opponent-reading labels, a duplicate-format tournament for comparing bots fairly, an evolution loop, a scenario bank for testing specific skills, and Python bindings for the RL work.
+This repo currently contains **stage 1 of the training pipeline**: a tested pure-Python rules engine, four heuristic bots, a self-play logger that writes training data with exact opponent-reading labels, a duplicate-format tournament for comparing bots fairly, an evolution loop, a scenario bank for testing specific skills, and a Python environment API for the RL work.
 
 - **[RULES.md](RULES.md)**: the exact ruleset, confirmed with the team.
 - **[docs/DESIGN.md](docs/DESIGN.md)**: the reinforcement-learning plan, how explanations stay faithful, how to evaluate, and open issues.
@@ -10,40 +10,37 @@ This repo currently contains **stage 1 of the training pipeline**: a fast, teste
 ## Layout
 
 ```
-engine/         Rust library: rules, scoring, shanten, bots, self-play
-  src/tile.rs       tile ids and notation (1m..9m, 1p.., 1s.., 1z..7z, f1-f4, g1-g4, a1-a4)
-  src/game.rs       state machine for one hand (deal, draws, claims, kongs, robbing, draw game)
-  src/scoring.rs    win decomposition, tai patterns, payments
-  src/shanten.rs    table-based shanten and useful-tile counts
-  src/obs.rs        action space (76) and observation encoding (672 bytes)
-  src/bots.rs       heuristic bots: fast, high_tai, defensive, balanced
-  src/selfplay.rs   data logger, duplicate tournament
-  src/scenario.rs   scenario format, position builder, exact checks
-  tests/rules.rs    rule tests (one per scoring rule), engine invariants, label checks
+python/dasanyuan/   the engine, pure Python: `import dasanyuan`, CLI `dsy`
+  tile.py           tile ids and notation (1m..9m, 1p.., 1s.., 1z..7z, f1-f4, g1-g4, a1-a4)
+  rng.py            seeded xoshiro256++ RNG, so a seed gives the same deal on every machine
+  game.py           state machine for one hand (deal, draws, claims, kongs, robbing, draw game)
+  scoring.py        win decomposition, tai patterns, payments
+  shanten.py        shanten and useful-tile counts (cached per-suit tables)
+  obs.py            action space (76) and observation encoding (672 bytes)
+  bots.py           heuristic bots: fast, high_tai, defensive, balanced
+  selfplay.py       data logger, full games, duplicate tournament
+  scenario.py       scenario format, position builder, exact checks
+  evaluate.py       per-move expected values by rollouts
+  trace.py          replay-viewer traces
+  cli.py            `dsy` command-line tool (also `python -m dasanyuan`)
+python/tests/       rule tests (one per scoring rule), engine invariants, label checks, replay check
 scenarios/      hand-built positions: defence, flush/honour reading, pushing, tai planning, rules
 db/             PostgreSQL schema, loader and docker-compose for analysis
 notebooks/      EDA notebook and exported figures
 docs/           design and RL plan
-cli/            `dsy` command-line tool
-python/         PyO3 bindings: `import dasanyuan`
 ```
 
 ## Setup
 
-You need Rust (https://rustup.rs) and Python 3.9+.
+You need Python 3.9+ (numpy is the only dependency).
 
 ```bash
-cargo build --release          # builds target/release/dsy
-cargo test --release           # rule tests + 3,000 full simulated hands
-cargo install --path cli       # optional: puts `dsy` on your PATH
-
-cd python
-pip install maturin numpy pytest
-maturin develop --release      # installs `dasanyuan` into your active environment
-pytest tests
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e "python[test]"   # installs `dasanyuan` and puts `dsy` on your PATH
+pytest python/tests             # rule tests + 3,000 full simulated hands + exact replay check
 ```
 
-Without `cargo install`, run it as `target/release/dsy` (`target\release\dsy.exe` on Windows).
+`python -m dasanyuan <command>` works the same as `dsy <command>`.
 
 ## Commands
 
@@ -100,7 +97,7 @@ Each `shard_XXXXX/` directory holds gzip-compressed numpy arrays (`--no-compress
 
 | File | Shape | Meaning |
 |---|---|---|
-| `obs` | [N, 672] u8 | What the acting player can see. Layout documented in `engine/src/obs.rs` |
+| `obs` | [N, 672] u8 | What the acting player can see. Layout documented in `python/dasanyuan/obs.py` |
 | `mask` | [N, 76] u8 | Legal actions |
 | `action` | [N] u8 | Action taken |
 | `oracle` | [N, 102] u8 | The other three players' hidden hands. **Training target only**, never a policy input |
@@ -174,7 +171,7 @@ After that, everyone uses the same connection: `postgresql://dsy:dsy@localhost:5
 
 **Alternatives.**
 
-- *Regenerate instead of copying.* The data is deterministic, so with Rust installed `dsy selfplay --games 1000 --out data/games1000` then `python db/load_selfplay.py data/games1000` produces identical rows on any machine. This takes a few minutes and needs no file transfer.
+- *Regenerate instead of copying.* The data is deterministic, so `dsy selfplay --games 1000 --out data/games1000` then `python db/load_selfplay.py data/games1000` produces identical rows on any machine. This takes a few minutes on a multi-core machine and needs no file transfer.
 - *Share the raw folder.* Zip `data/games1000/` (about 170 MB, including the training shards) and load it with `db/load_selfplay.py`. Use this route when a teammate also needs the `.npy` files for model training.
 
 ## Easy-to-read hand table
@@ -251,7 +248,7 @@ python web/replay/build.py
 
 ## Scenario bank
 
-`scenarios/*.txt` holds hand-built positions with checkable expectations. The format is documented at the top of `engine/src/scenario.rs`. Expectations include `safe` (the discard must not deal in, checked against the real hidden hands), `max_ukeire`, `win`, `pass`, `any_of`, `none_of` and rule checks. `trap: yes` makes the validator confirm that the most efficient discard deals in, so a bot can't pass a defence scenario by playing normally.
+`scenarios/*.txt` holds hand-built positions with checkable expectations. The format is documented at the top of `python/dasanyuan/scenario.py`. Expectations include `safe` (the discard must not deal in, checked against the real hidden hands), `max_ukeire`, `win`, `pass`, `any_of`, `none_of` and rule checks. `trap: yes` makes the validator confirm that the most efficient discard deals in, so a bot can't pass a defence scenario by playing normally.
 
 Current baselines (pass rate over 20 runs):
 
@@ -262,7 +259,7 @@ Current baselines (pass rate over 20 runs):
 | tai planning | 65% | 67% | 67% | 100% | 67% | 67% |
 | rules | 100% | 100% | 100% | 100% | 100% | 100% |
 
-Read defence and push together: random discards look safe because only one tile is dangerous, but random play fails everything else. Add scenarios freely; `cargo test` validates them all.
+Read defence and push together: random discards look safe because only one tile is dangerous, but random play fails everything else. Add scenarios freely; `pytest python/tests` validates them all.
 
 ## How this fits the training plan
 
@@ -276,7 +273,7 @@ Details in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Performance
 
-About 850 hands/s on 2 cloud CPU threads with heuristic bots and full label logging. The Python environment alone runs about 178,000 decisions/s on one thread. Scaling is roughly linear with cores, so a 16-thread desktop should do several thousand hands per second. Run `dsy bench` to measure. In the duplicate format, 5,000 walls give a standard error of about 0.08 points per hand.
+About 335 hands/s with heuristic bots and full label logging on a 10-core laptop (work is split across processes, one shard or batch of walls each; `--threads N` limits them). One process runs about 37,000 raw environment decisions/s, or 3,300/s with a heuristic bot choosing every move. Run `dsy bench` to measure. In the duplicate format, 5,000 walls give a standard error of about 0.08 points per hand. Rollout evaluation (`dsy evaluate`) is the slowest command: one full game with 64 worlds per move takes around half an hour on 10 cores.
 
 ## Sample results (12,000 duplicate hands)
 

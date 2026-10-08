@@ -47,7 +47,7 @@ The opponent heads are trained with supervised losses against the exact labels t
    - Promote a checkpoint into the pool only when it beats the current pool in a duplicate tournament by more than 2 standard errors.
 4. **Human fine-tuning** (later): games from phase-1 users correct for the fact that bots and people discard differently.
 
-**Throughput.** The raw Python environment runs ~178,000 decisions/s on one thread (without a policy); a heuristic-bot game runs ~20,000 decisions/s through Python. Network inference will be the bottleneck, so step 64–256 environments together and batch the forward pass on the GPU. A batched environment in Rust is an optimisation for later, not a blocker.
+**Throughput.** The pure-Python environment runs ~37,000 decisions/s per process (without a policy); a heuristic-bot game runs ~3,300 decisions/s per process. Network inference will be the bottleneck, so step 64–256 environments together and batch the forward pass on the GPU. Many environment processes in parallel (or a compiled port of the hot paths: shanten, scoring) is an optimisation for later, not a blocker.
 
 ## 4. Explanations that stay faithful
 
@@ -87,7 +87,7 @@ Use held-out seeds for every reported number, and never tune on the scenarios yo
 
 1. **Phase 2 can't see what phase 1 sees.** In a real game the user photographs their hand and types the discards. They usually won't know the discard order, who threw the drawn tile straight back (tsumogiri), or the exact turn. A model trained on full sequences will quietly get worse. Fix it from the start: during training, randomly blank the sequence and turn fields (keep the counts), so one model works with either. Also design the phase-2 input screen to capture as much as is practical (per-player discards, melds, bonus tiles).
 2. **Recognition errors.** Phase 2's tile detector will sometimes misread a tile. Train with some noise (a wrong tile now and then) and show the user what was recognised so they can correct it before advice is given.
-3. **How the website runs the engine.** The Rust engine compiles to WebAssembly, so the exact same rules can run in the browser for practice games, with the server only for friend games. Decide this before writing game logic in another language twice.
+3. **How the website runs the engine.** The engine is pure Python, so it can run on the server as is, or in the browser through Pyodide for practice games, with the server only for friend games. Decide this before writing game logic in another language twice.
 4. **How the website runs the model.** Plan to export the trained PyTorch network to ONNX and run it with onnxruntime (server) or onnxruntime-web (browser). Keep the network small enough for that (a few million parameters).
 5. **Observation versioning.** Every dataset records `obs_version` (now 2). Models must record which version they were trained on.
 
