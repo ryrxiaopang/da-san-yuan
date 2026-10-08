@@ -23,6 +23,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from engine.game import PASS, WIN, Action, Game          # noqa: E402
+from engine.shanten import shanten                        # noqa: E402
 
 OLD_TO_NEW = {t: t for t in range(46)}
 OLD_TO_NEW[31], OLD_TO_NEW[33] = 33, 31                  # swap White and Red
@@ -100,8 +101,9 @@ def load(path):
     return np.load(path)
 
 
-def check_shard(shard):
+def check_shard(shard, check_shanten=False):
     action, mask, meta = load(shard / "action.npy"), load(shard / "mask.npy"), load(shard / "meta.npy")
+    old_shanten = load(shard / "shanten.npy") if check_shanten else None
     hands = list(csv.DictReader(open(shard / "hands.csv", newline="")))
     row, problems, decisions = 0, [], 0
     for h in hands:
@@ -117,6 +119,14 @@ def check_shard(shard):
                 if new_legal != old_legal:
                     raise AssertionError(f"decision {row}: legal moves differ, old only {sorted(old_legal - new_legal)}, "
                                          f"new only {sorted(new_legal - old_legal)}")
+                if check_shanten:
+                    # old engine stored every seat's shanten, me first, then next, opposite, previous
+                    for r in range(4):
+                        p = game.players[(seat + r) % 4]
+                        new_sh = max(-1, min(8, shanten(p.hand, len(p.melds))))
+                        if new_sh != int(old_shanten[row, r]):
+                            raise AssertionError(f"decision {row}: shanten of seat {(seat + r) % 4} is "
+                                                 f"{new_sh}, old engine says {int(old_shanten[row, r])}")
                 game.apply(seat, from_old_index(game, int(action[row])))
                 row += 1
                 decisions += 1
@@ -137,6 +147,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dir")
     ap.add_argument("--shards", default="0", help="e.g. 0 or 0-9")
+    ap.add_argument("--shanten", action="store_true", help="also compare every player's shanten (slower)")
     args = ap.parse_args()
     a, _, b = args.shards.partition("-")
     picks = range(int(a), int(b or a) + 1)
@@ -144,7 +155,7 @@ def main():
     total_hands = total_dec = 0
     all_problems = []
     for i in picks:
-        n, d, probs = check_shard(shards[i])
+        n, d, probs = check_shard(shards[i], args.shanten)
         total_hands += n
         total_dec += d
         all_problems += probs

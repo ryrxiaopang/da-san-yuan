@@ -10,7 +10,7 @@ A bot that learns Singapore mahjong: first by copying a rule-based greedy bot (b
 
 ```bash
 pip install -r requirements.txt
-python -m pytest engine -q        # should print "51 passed"
+python -m pytest engine bots -q   # should print "65 passed"
 ```
 
 ## Try the engine
@@ -33,8 +33,8 @@ print(game.result)
 | Stage | Status |
 |---|---|
 | 1. Game engine | Built and tested |
-| 2. Rule-based bots | Next |
-| 3. Data collection | |
+| 2. Rule-based bots | Built and tested |
+| 3. Data collection | Next |
 | 4. Behavioural cloning | |
 | 5. Reinforcement learning | |
 | 6. Evaluation | |

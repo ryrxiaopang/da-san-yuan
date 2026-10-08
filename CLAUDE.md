@@ -24,10 +24,11 @@ I'm new to machine learning and still learning Python. When working with me:
 6. **Evaluation** — duplicate mahjong (same shuffled walls, seats rotated),
    measured in average chips per hand vs GreedyBot.
 
-Current status: **stage 1 (engine) built and tested** — see `engine/`. Stages 2–6
-not started. `data/collect_data.py` still contains the placeholder engine
-(`SimpleGame`) and placeholder teacher (`GreedyBot`); both get replaced in
-stages 2–3. The old Rust project lives on the `old` branch.
+Current status: **stages 1 (engine) and 2 (bots) built and tested** — see
+`engine/` and `bots/`. Stages 3–6 not started. `data/collect_data.py` still
+contains the placeholder engine (`SimpleGame`) and placeholder teacher; stage 3
+switches it to the real engine and `bots/greedy_bot.py`. The old Rust project
+lives on the `old` branch.
 
 ## Decisions already made
 
@@ -121,19 +122,24 @@ One row per discard, from all 4 bots, each from that bot's own point of view.
 | `engine/tiles.py` | Tile numbers, names, the 148-tile set, `parse_tiles("123m E E f1")`. |
 | `engine/scoring.py` | Win detection, every tai pattern, payments. |
 | `engine/game.py` | One hand step by step (`Game`), and the dealer rule between hands (`TableState`). |
-| `engine/test_*.py` | Rule tests. Run before every commit. |
-| `tools/crosscheck_old_data.py` | One-off check that the engine matches the old Rust engine on its recorded games. |
+| `engine/shanten.py` | Shanten (tiles from ready) and useful tiles. |
+| `engine/view.py` | `PlayerView`: what one seat may see. Bots and the network only get this. |
+| `engine/test_*.py`, `bots/test_bots.py` | Tests. Run before every commit. |
+| `bots/random_bot.py` | `RandomBot`: wins when it can, otherwise random legal moves. Lowest benchmark. |
+| `bots/greedy_bot.py` | `GreedyBot`: the teacher, rules under "GreedyBot details" above. |
+| `tools/play_bots.py` | Bots play each other; prints points per hand, wins, deal-ins, tai. |
+| `tools/crosscheck_old_data.py` | One-off check that the engine (and shanten, with `--shanten`) matches the old Rust engine on its recorded games. |
 | `data/collect_data.py` | Bots play, every discard saved. `SimpleGame` and `GreedyBot` are placeholders until stage 3; `encode()` moves to 49 lines then. |
 | `ml/train_bc.py` | Behavioral cloning. Loads the data file, splits by game, trains `DiscardNet`, saves the best model by test accuracy. |
 | `bc_model.pt` | Saved BC weights: `{"state_dict", "num_planes"}`. Loaded by the RL stage. |
 
 Layout (planned parts marked *):
 ```
-engine/   tiles.py, game.py, scoring.py, test_scoring.py, test_game.py
-bots/     random_bot.py*, greedy_bot.py*
+engine/   tiles.py, game.py, scoring.py, shanten.py, view.py, test_*.py
+bots/     random_bot.py, greedy_bot.py, test_bots.py
 data/     collect_data.py
 ml/       encode.py*, model.py*, train_bc.py, train_ppo.py*
-tools/    crosscheck_old_data.py
+tools/    crosscheck_old_data.py, play_bots.py
 evaluate.py*
 ```
 
@@ -141,7 +147,8 @@ evaluate.py*
 
 ```bash
 pip install -r requirements.txt
-python -m pytest engine -q                      # engine tests (about 40 s)
+python -m pytest engine bots -q                 # all tests (about 1 minute)
+python tools/play_bots.py --hands 1000 --bots greedy,greedy,random,random
 python data/collect_data.py --games 5000 --out greedy_games.pt
 python ml/train_bc.py greedy_games.pt --epochs 20
 ```
