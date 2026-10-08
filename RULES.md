@@ -1,19 +1,19 @@
 # Rules encoded in the engine
 
-This is the exact ruleset the engine, bots and training data follow. If your table plays differently, change the rule here **and** the matching test in `engine/tests/rules.rs`, then regenerate any data.
+This is the exact ruleset the engine (`engine/`), bots and training data follow. If your table plays differently, change the rule here **and** the matching test in `engine/test_scoring.py` or `engine/test_game.py`, then regenerate any data.
 
 ## Tiles (148)
 
-| Group | Tiles | Copies | Notation |
-|---|---|---|---|
-| Characters 1–9 | 万 | 4 each | `1m`–`9m` |
-| Dots 1–9 | 筒 | 4 each | `1p`–`9p` |
-| Bamboo 1–9 | 条 | 4 each | `1s`–`9s` |
-| Winds E S W N | 东南西北 | 4 each | `1z`–`4z` |
-| Dragons White Green Red | 白发中 | 4 each | `5z`–`7z` |
-| Seasons 1–4 | 春夏秋冬 | 1 each | `f1`–`f4` |
-| Plants 1–4 | 梅兰菊竹 | 1 each | `g1`–`g4` |
-| Animals | cat, rat, rooster, centipede | 1 each | `a1`–`a4` |
+| Group | Tiles | Copies | Notation | Numbers in code |
+|---|---|---|---|---|
+| Characters 1–9 | 万 | 4 each | `1m`–`9m` | 0–8 |
+| Dots 1–9 | 筒 | 4 each | `1p`–`9p` | 9–17 |
+| Bamboo 1–9 | 条 | 4 each | `1s`–`9s` | 18–26 |
+| Winds East South West North | 东南西北 | 4 each | `E S W N` | 27–30 |
+| Dragons Red Green White | 中发白 | 4 each | `Rd Gr Wh` | 31–33 |
+| Seasons 1–4 | 春夏秋冬 | 1 each | `f1`–`f4` | 34–37 |
+| Plants 1–4 | 梅兰菊竹 | 1 each | `g1`–`g4` | 38–41 |
+| Animals | cat, rat, rooster, centipede | 1 each | `a1`–`a4` | 42–45 |
 
 ## Play
 
@@ -22,7 +22,7 @@ This is the exact ruleset the engine, bots and training data follow. If your tab
 - Claims on a discard: **win > pong / kong > chow**. Only the next player may chow. If several players can win on the same discard, the one nearest after the discarder wins.
 - Kongs: concealed kong (4 in hand), exposed kong (from a discard, holding 3), added kong (4th tile onto your own pong). Every kong draws a replacement from the back, so a kong cannot be declared once no live tiles are left to draw. An added kong can be **robbed** by a player who wins on that tile.
 - After a pong or chow you must discard straight away.
-- The hand is a **draw** when 15 live tiles remain (`Config::reserve`). No points change.
+- The hand is a **draw** when 15 live tiles remain (`RESERVE` in `engine/game.py`). No points change.
 - Minimum **1 tai** to win, maximum **5 tai**.
 
 ## A full game (dealer rule)
@@ -108,6 +108,4 @@ Unit price doubles per tai: 1, 2, 4, 8, 16 for 1–5 tai.
 
 ## Data-generation conventions (not table rules)
 
-Data is generated as complete games (`dsy selfplay --games N`) under the dealer rule above, with the same four players for a whole game. This makes the data match real play; East appears slightly more often than the other seats because dealers can repeat. The training reward is still each hand's own points, so the dealer rule changes who deals, not what a hand is worth.
-
-The older independent-hands mode (`dsy selfplay --hands N`) passes the deal every hand; its hands are labelled as if games had exactly 16 hands.
+Hands are played one after another under the dealer rule above (`TableState` in `engine/game.py`), so the data contains every seat wind and every round wind. Each hand is still scored on its own: the reward for a hand is that hand's points.

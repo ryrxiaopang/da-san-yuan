@@ -1,290 +1,40 @@
-# da-san-yuan 大三元
+# Singapore Mahjong RL
 
-Singapore 4-player mahjong engine, heuristic bots and self-play data generator. It is the foundation for a learning platform that advises players on the best move and explains why.
+A bot that learns Singapore mahjong: first by copying a rule-based greedy bot (behavioural cloning), then by improving through self-play reinforcement learning.
 
-This repo currently contains **stage 1 of the training pipeline**: a fast, tested rules engine, four heuristic bots, a self-play logger that writes training data with exact opponent-reading labels, a duplicate-format tournament for comparing bots fairly, an evolution loop, a scenario bank for testing specific skills, and Python bindings for the RL work.
-
-- **[RULES.md](RULES.md)**: the exact ruleset, confirmed with the team.
-- **[docs/DESIGN.md](docs/DESIGN.md)**: the reinforcement-learning plan, how explanations stay faithful, how to evaluate, and open issues.
-
-## Layout
-
-```
-engine/         Rust library: rules, scoring, shanten, bots, self-play
-  src/tile.rs       tile ids and notation (1m..9m, 1p.., 1s.., 1z..7z, f1-f4, g1-g4, a1-a4)
-  src/game.rs       state machine for one hand (deal, draws, claims, kongs, robbing, draw game)
-  src/scoring.rs    win decomposition, tai patterns, payments
-  src/shanten.rs    table-based shanten and useful-tile counts
-  src/obs.rs        action space (76) and observation encoding (672 bytes)
-  src/bots.rs       heuristic bots: fast, high_tai, defensive, balanced
-  src/selfplay.rs   data logger, duplicate tournament
-  src/scenario.rs   scenario format, position builder, exact checks
-  tests/rules.rs    rule tests (one per scoring rule), engine invariants, label checks
-scenarios/      hand-built positions: defence, flush/honour reading, pushing, tai planning, rules
-db/             PostgreSQL schema, loader and docker-compose for analysis
-notebooks/      EDA notebook and exported figures
-docs/           design and RL plan
-cli/            `dsy` command-line tool
-python/         PyO3 bindings: `import dasanyuan`
-```
+- **The plan, decisions and conventions:** [CLAUDE.md](CLAUDE.md)
+- **The rules the engine follows:** [RULES.md](RULES.md)
+- **The previous Rust-based version** is on the `old` branch.
 
 ## Setup
 
-You need Rust (https://rustup.rs) and Python 3.9+.
-
 ```bash
-cargo build --release          # builds target/release/dsy
-cargo test --release           # rule tests + 3,000 full simulated hands
-cargo install --path cli       # optional: puts `dsy` on your PATH
-
-cd python
-pip install maturin numpy pytest
-maturin develop --release      # installs `dasanyuan` into your active environment
-pytest tests
+pip install -r requirements.txt
+python -m pytest engine -q        # should print "51 passed"
 ```
 
-Without `cargo install`, run it as `target/release/dsy` (`target\release\dsy.exe` on Windows).
-
-## Commands
-
-```bash
-# Check a hand against the rules (seat 0 = East). Prints every tai pattern and the payment.
-dsy score "123m456p789s123s99m" --win 1s --seat 1
-
-# Generate training data (all cores). 100k hands is about 700 MB compressed.
-dsy selfplay --games 5000 --out data/selfplay   # 5,000 full games, about 116,000 hands
-
-# Fair comparison: every wall is played 4 times with the bots rotated through all seats.
-dsy tournament --styles fast,high_tai,defensive,balanced --walls 5000
-
-# Evolution: champion vs 3 mutated copies of itself; a challenger is promoted only if it
-# beats the champion by more than 2 standard errors.
-dsy evolve --generations 30 --walls 3000 --start balanced --log data/evolve.csv
-
-# Score bots on the scenario bank (pass rate per scenario and per skill tag).
-dsy scenarios --verbose
-
-dsy bench                       # throughput on this machine
-```
-
-Styles can also be given as CSV lines (`name,speed,value,defence,claim,flush,pongs`), so a champion from `evolve.csv` can be fed straight back into `selfplay` or `tournament`.
-
-## Python
+## Try the engine
 
 ```python
-import dasanyuan as dsy
+from engine.game import Game, WIN
+import random
 
-env = dsy.Env(seed=1)
-while not env.is_over():
-    seat = env.to_act()
-    obs, mask = env.observe(seat)            # uint8 [672], uint8 [76]
-    action = env.bot_action(seat, "balanced")  # or your policy's choice
-    env.step(seat, action)
-print(env.result())   # winner, tai, patterns, point changes
-
-data = dsy.load_shards("data/selfplay")      # obs, mask, action, oracle, meta
+game = Game(dealer=0, prevailing=0, seed=1)
+rng = random.Random(1)
+while not game.is_over():
+    seat = game.to_act()
+    options = game.legal_actions(seat)
+    game.apply(seat, WIN if WIN in options else rng.choice(options))
+print(game.result)
 ```
 
-`python examples/inspect_data.py data/selfplay` prints the action mix, results per bot, tai distribution, and how often each bot threw a tile that could deal in compared with a random choice.
+## Progress
 
-```python
-w, sh = env.labels(seat)     # exact: [3, 34] tai each opponent wins with per tile, [4] shanten
-bank = dsy.Scenarios("../scenarios")
-env = bank.env(0); seat = env.to_act()
-ok, msg = bank.check(0, my_policy(*env.observe(seat)))
-```
-
-## Data format
-
-Each `shard_XXXXX/` directory holds gzip-compressed numpy arrays (`--no-compress` for plain `.npy`), about 7 KB per hand:
-
-| File | Shape | Meaning |
-|---|---|---|
-| `obs` | [N, 672] u8 | What the acting player can see. Layout documented in `engine/src/obs.rs` |
-| `mask` | [N, 76] u8 | Legal actions |
-| `action` | [N] u8 | Action taken |
-| `oracle` | [N, 102] u8 | The other three players' hidden hands. **Training target only**, never a policy input |
-| `waits` | [N, 3, 34] u8 | For each opponent and tile: tai they would win with if you discarded it now (0 = cannot deal in). Exact, from the engine |
-| `shanten` | [N, 4] i8 | Tiles from ready for every seat, you first (0 = ready, -1 = complete) |
-| `meta` | [N, 6] i32 | hand_id, seat, bot_id, final points for this seat, won, dealt in |
-| `hands.csv` | per hand | seed, dealer, bots, winner, tai, patterns, point changes |
-
-Seats in `obs` and `oracle` are relative: 0 = you, 1 = next player, 2 = opposite, 3 = previous. Actions: 0–33 discard, 34–67 kong, 68 tsumo, 69 ron, 70 pong, 71 exposed kong, 72–74 chow (claimed tile low/middle/high), 75 pass.
-
-**Line-ups and why styles play different numbers of hands.** Styles are drawn at random (`random_lineup=true` in `format.txt`): per hand in hand mode, per game in full-game mode, where the same four players sit through the whole game. Styles therefore get roughly, not exactly, equal numbers of seats: in `games1000` the counts were 22,092 to 24,332 player-hands (within about 5%, because games run 16 to 36 hands long), and in the older `run20k` 19,838 to 20,109. This is deliberate: varied line-ups (for example three aggressive players against one cautious one) teach the model to handle any mix of opponents. When comparing styles from this data, use average points per hand, never totals, since the average adjusts for the count. For a fair head-to-head comparison use `dsy tournament`, which gives every style the same deals from every seat; for a dataset with exactly equal counts, generate with `--fixed-lineup`.
-
-`oracle`, `waits` and `shanten` are the targets for the opponent-reading heads ("is the left player ready, and on what?"). `format.txt` in each dataset records `obs_version` (currently 2); bump it whenever the layout changes.
-
-## Analysis database (PostgreSQL)
-
-Training reads the `.npy` shards directly. For analysis and reporting, hand-level and decision-level summaries go into PostgreSQL:
-
-| Table / view | One row per | Contents |
-|---|---|---|
-| `runs` | data-generation run | seed, bots and their weights, observation version, engine commit, shard path |
-| `hands` | hand | deal seed (replays the hand exactly), dealer, wind, winner, discarder, tai, turns |
-| `hand_seats` | player per hand | bot style, seat wind, points, won, dealt in |
-| `hand_patterns` | tai pattern per win | pattern name, tai |
-| `decisions` | decision | phase, action, tile, legal options, wall count, own shanten, opponents ready, safe / unsafe options, tai the chosen discard gives away; for claims the tile on offer, who threw it, the set formed (`777z`, `345m`) and a plain-language `move` |
-| `move_values` | evaluated decision | expected points of the move played and of the best move, regret, every move's EV (`dsy evaluate`) |
-| `v_style_summary`, `v_pattern_frequency`, `v_defence`, `v_moves_readable`, `v_move_quality` | | ready-made summaries |
-
-```bash
-docker compose -f db/docker-compose.yml up -d        # or any PostgreSQL 13+; set DATABASE_URL
-pip install numpy pandas "psycopg[binary]" matplotlib jupyter
-
-dsy selfplay --games 1000 --out data/games1000     # about 23,000 hands
-python db/load_selfplay.py data/games1000               # --replace to reload, --no-decisions for hands only
-psql postgresql://dsy:dsy@localhost:5432/dasanyuan -c "select * from v_style_summary"
-```
-
-Size guide: `games1000` (23,230 hands) is about 1.4 million decision rows and roughly 200 MB inside PostgreSQL, but the export file for both runs together is only about 25 MB (see below). Free hosted tiers (about 0.5 GB) fit hand-level tables comfortably; use `--no-decisions` there.
-
-`notebooks/01_selfplay_eda.ipynb` turns a loaded run into the baseline charts and key findings (set `DSY_RUN` to pick a run). Exported figures are in `notebooks/figures/`.
-
-## Sharing the database with teammates (Windows, Mac, Linux)
-
-The export is one file that works on every operating system. Both people need PostgreSQL; the person loading needs the same major version or newer (PostgreSQL 18 on both is simplest).
-
-**1. Export (on the computer that has the data).** From the repo folder:
-
-```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File db\export_db.ps1              # everything, about 25 MB
-powershell -ExecutionPolicy Bypass -File db\export_db.ps1 -HandsOnly   # hands only, about 2 MB
-```
-```bash
-# Mac / Linux
-bash db/export_db.sh                 # or: bash db/export_db.sh --hands-only
-```
-
-This writes `dasanyuan.dump`. Send it over Google Drive, OneDrive or Teams. Do not commit it to Git.
-
-**2. Install PostgreSQL on the Mac (once).** Either install [Postgres.app](https://postgresapp.com) (download it, drag it to Applications, open it and click Initialize), or use Homebrew: `brew install postgresql@18` then `brew services start postgresql@18`. pgAdmin for Mac is optional, from pgadmin.org.
-
-**3. Import (on the Mac).** Clone the repo, put the dump file in the repo folder and run:
-
-```bash
-bash db/import_db.sh dasanyuan.dump
-```
-
-The script creates the `dsy` user (password `dsy`) and the `dasanyuan` database if they are missing, then loads the dump and prints the hand count per run. Running it again with a newer dump replaces the old data. On Windows the equivalent is `powershell -ExecutionPolicy Bypass -File db\import_db.ps1 dasanyuan.dump`, which asks once for the `postgres` password chosen at install time.
-
-After that, everyone uses the same connection: `postgresql://dsy:dsy@localhost:5432/dasanyuan`. In pgAdmin, register a server with host `localhost`, port `5432`, user `dsy`, password `dsy`. The notebook and `tools/readable_hands.py` work unchanged.
-
-**Alternatives.**
-
-- *Regenerate instead of copying.* The data is deterministic, so with Rust installed `dsy selfplay --games 1000 --out data/games1000` then `python db/load_selfplay.py data/games1000` produces identical rows on any machine. This takes a few minutes and needs no file transfer.
-- *Share the raw folder.* Zip `data/games1000/` (about 170 MB, including the training shards) and load it with `db/load_selfplay.py`. Use this route when a teammate also needs the `.npy` files for model training.
-
-## Easy-to-read hand table
-
-For browsing results in Excel or pgAdmin, there is a plain-language version of the hands:
-
-```bash
-python tools/readable_hands.py data/games1000     # writes data/games1000/hands_readable.csv
-```
-
-In PostgreSQL the same table is the view `v_hands_readable` (`SELECT * FROM v_hands_readable WHERE run_id = 1 ORDER BY hand_id LIMIT 20;`).
-
-| Column | Meaning |
+| Stage | Status |
 |---|---|
-| Game | Which full game, starting at 1 |
-| Round | East, South, West or North round (the prevailing wind) |
-| Dealer no. | 1 to 4: which of the round's four dealers is dealing |
-| Repeat | 0 for the dealer's first hand; 1, 2 ... when the dealer won or drew without a kong and dealt again |
-| Hand in game | Every hand of the game counted in order: 1, 2, 3 ... |
-| Hand | All of the above as one label, e.g. "Game 1, East round, Dealer 4, Repeat 1" |
-| East player (dealer) … North player | The play style sitting at each wind: Fast, High-tai, Defensive or Balanced. The dealer always sits East, and seats move every hand |
-| Result | Won on a discard, Self-drawn win, or Draw (no winner) |
-| Winner | Who won, as wind and style, e.g. "South (Balanced)". The style alone is not enough because two players can share a style |
-| Threw the winning tile | Who discarded the tile the winner took, and so pays for everyone. "Nobody (self-drawn)" when the winner drew it themselves |
-| Tai / Tai before 5-tai cap | Hand value as paid, and before the 5-tai limit |
-| Where the tai came from | Each scoring pattern and its tai, e.g. "Men qing (fully concealed) +1, Animal x2 +2" |
-| East points … North points | Points each player gained (+) or paid (−) this hand; they always add up to 0 |
-| Turns | How many turns the hand lasted |
-
-The original `shard_*/hands.csv` files stay as they are: the loader and training read them, and they keep the exact seed for replaying each hand. Don't save `hands.csv` from Excel, which rounds the seeds.
-
-## Checking the data is legitimate (independent referee)
-
-The engine generated the data, so the engine cannot vouch for it. `tools/referee/referee.py` is a second, separate implementation of the rules, written in Python from `RULES.md`. It imports nothing from the engine and reads only the stored dataset:
-
-```bash
-python tools/referee/referee.py data/games1000            # every hand and decision (about 5 min on 16 threads)
-python tools/referee/referee.py data/games1000 --shards 0 # quick spot check, 100 games
-python tools/referee/test_referee.py data/games1000       # proves the referee catches planted faults
-```
-
-For every hand it rebuilds the wall from the stored seed (its own copy of the shuffle) and checks it is a complete 148-tile set, then deals and plays the hand itself. At every recorded decision it checks that the right player was asked, that the legal moves offered are exactly the ones the rules allow, that the move taken is one of them, and that the stored table (hands, melds, discards, bonus tiles, hidden hands, wall count) matches its own, with every tile accounted for once. It recomputes the opponent "waits" labels, scores every win from scratch and checks the payments add to zero. Across each full game it checks the dealer rule, round wind and labels, and across the run that the shuffle is fair (every tile equally likely at every wall position).
-
-`test_referee.py` plants ten kinds of fault (an illegal move, a tile from nowhere, a wrong score, a tampered seed, a wrong danger label, a missing decision, ...) and checks each is caught. It also scores 19 hand-made hands for patterns too rare to appear in self-play (nine gates, small four winds, ping hu edge cases, ...) three ways: by hand from `RULES.md`, by the referee and by the engine.
-
-What this does and does not show: it shows every hand follows `RULES.md` exactly. It cannot show `RULES.md` matches how your table plays, or that the bots play like people; those need a person who plays to read the rules and watch replays.
-
-## Expected value of every move (`dsy evaluate`)
-
-Final points only say how a whole hand went. To judge single moves, `dsy evaluate` replays games from a run and, at every decision, tries **every legal move** in the same 64 sampled "worlds", playing each to the end of the hand with the bots. A move's expected value (EV) is the player's average final points; **regret** is the best move's EV minus the EV of the move actually played (0 = best move).
-
-```bash
-dsy evaluate --games 1-10 --seed 1 --worlds 64 --out data/games1000/move_values.csv   # seed = the run's seed
-python db/load_move_values.py data/games1000/move_values.csv --run games1000
-```
-
-- **Fair mode (default):** the tiles the player cannot see (opponents' hands and the wall) are re-dealt in every world, so the EV uses only what the player knew. `--oracle` keeps the real hidden tiles instead ("what would actually have happened").
-- All moves share the same worlds and bot seeds, so the difference between two moves is measured much more precisely than each EV alone (`regret_se`).
-- Cost: about 9 minutes per game on 2 cores at 64 worlds; expect roughly 1 to 1.5 minutes per game on a 16-thread desktop. Fewer worlds is faster but noisier (the error grows as 1/sqrt(worlds)).
-- Known bias: re-dealt opponents get random hands, ignoring what their discards suggest, so fair-mode EVs slightly underrate opponents. The RL critic learns this from real play instead.
-
-In SQL, `v_moves_readable` shows every move in plain language with its EV, the best move and the points lost; `v_move_quality` is the per-style, per-situation summary (average points lost, % best or near-best moves, % clear mistakes).
-
-## Replay viewer
-
-`web/replay/index.html` plays Game 1 of the 1,000-game dataset on its own, from the East round to the North round with real dealer repeats, with an action log and running points by play style. It replays real hands move by move and shows, for every decision, the training row being recorded: the 672-number snapshot, the allowed moves and the one chosen, the hidden answers used to train the opponent reader, and the points added as the reward when the hand ends. Open it in any browser.
-
-The hands are reproduced exactly (same line-up, same bot seeds), so each one matches its rows in `hands.csv` and the database. To show other hands:
-
-```bash
-dsy trace --game 1 --out web/replay/replay.json   # any game number from the run
-python web/replay/build.py
-```
-
-## Scenario bank
-
-`scenarios/*.txt` holds hand-built positions with checkable expectations. The format is documented at the top of `engine/src/scenario.rs`. Expectations include `safe` (the discard must not deal in, checked against the real hidden hands), `max_ukeire`, `win`, `pass`, `any_of`, `none_of` and rule checks. `trap: yes` makes the validator confirm that the most efficient discard deals in, so a bot can't pass a defence scenario by playing normally.
-
-Current baselines (pass rate over 20 runs):
-
-| Skill | random | efficiency only | fast | high_tai | defensive | balanced |
-|---|---|---|---|---|---|---|
-| defence | 89% | 20% | 60% | 80% | 80% | 80% |
-| push (don't over-fold) | 10% | 100% | 93% | 100% | 100% | 100% |
-| tai planning | 65% | 67% | 67% | 100% | 67% | 67% |
-| rules | 100% | 100% | 100% | 100% | 100% | 100% |
-
-Read defence and push together: random discards look safe because only one tile is dangerous, but random play fails everything else. Add scenarios freely; `cargo test` validates them all.
-
-## How this fits the training plan
-
-1. **Heuristic archetypes** (this repo): four styles that only use visible information.
-2. **Evolution** (`dsy evolve`): tune style weights by duplicate-format tournaments.
-3. **Behaviour cloning**: train a network on `obs` → `action` from the best bots' games, plus opponent-reading heads on `waits` / `shanten` / `oracle`.
-4. **PPO self-play league** (the reinforcement learning) using `dasanyuan.Env`: start from the cloned network; play against past versions and the heuristic bots; reward = points.
-5. **Explanations**: afterstate values per discard + opponent-reading predictions + exact tile odds.
-
-Details in [docs/DESIGN.md](docs/DESIGN.md).
-
-## Performance
-
-About 850 hands/s on 2 cloud CPU threads with heuristic bots and full label logging. The Python environment alone runs about 178,000 decisions/s on one thread. Scaling is roughly linear with cores, so a 16-thread desktop should do several thousand hands per second. Run `dsy bench` to measure. In the duplicate format, 5,000 walls give a standard error of about 0.08 points per hand.
-
-## Sample results (12,000 duplicate hands)
-
-| Style | Points/hand (± se) | Win % | Deal-in % |
-|---|---|---|---|
-| high_tai | +1.72 ± 0.13 | 32.6 | 15.7 |
-| balanced | −0.38 ± 0.12 | 20.6 | 15.8 |
-| fast | −0.54 ± 0.12 | 21.1 | 18.6 |
-| defensive | −0.80 ± 0.11 | 16.2 | 13.1 |
-
-These are hand-tuned starting points, not strong play. Beating them, and then beating the behaviour-cloned model, is how the RL stage proves itself.
+| 1. Game engine | Built and tested |
+| 2. Rule-based bots | Next |
+| 3. Data collection | |
+| 4. Behavioural cloning | |
+| 5. Reinforcement learning | |
+| 6. Evaluation | |

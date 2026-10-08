@@ -1,12 +1,14 @@
-/target
-/data
+# Data files and models (share these through Google Drive, not Git)
+*.pt
 *.npy
 *.npy.gz
-__pycache__/
-*.so
-*.pyd
-.venv/
-python/dasanyuan/_core*
-*.egg-info/
-.pytest_cache/
+/datasets/
+/data/*/
 *.dump
+# Python
+__pycache__/
+.pytest_cache/
+.venv/
+*.egg-info/
+# Old Rust build output, if you still have it locally
+/target
